@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 import dill
 from munch import Munch
 import numpy as np
@@ -67,7 +67,7 @@ def read_pred_file(path, file_format=None, format_fn=None, ignore_header=False):
 class AbstractTest(ABC):
     def __init__(self, data, expect, labels=None, meta=None, agg_fn='all',
                  templates=None, print_first=None, name=None, capability=None,
-                 description=None):
+                 description=None, unit_tests=[]):
         self.data = data
         self.expect = expect
         self.labels = labels
@@ -80,6 +80,8 @@ class AbstractTest(ABC):
         self.name = name
         self.capability = capability
         self.description = description
+        self.unit_tests = unit_tests
+        
     def save(self, file):
         dill.dump(self, open(file, 'wb'), recurse=True)
 
@@ -114,6 +116,10 @@ class AbstractTest(ABC):
             print()
         print('----')
 
+    def print1(self, idx, fixtures, preds, format_example_fn=None, nsamples=3):
+        print(format_example_fn(idx, fixtures, preds))
+        print('----')
+        
     def set_expect(self, expect):
         """Sets and updates expectation function
 
@@ -371,14 +377,34 @@ class AbstractTest(ABC):
         preds, confs = predict_and_confidence_fn(examples)
         self.run_from_preds_confs(preds, confs, overwrite=overwrite)
 
+    def run1(self, overwrite=False, verbose=True):
+        # Checking just to avoid predicting in vain, will be created in run_from_preds_confs
+        self._check_create_results(overwrite, check_only=False)
+        # examples, result_indexes = self.example_list_and_indices(n, seed=seed)
+
+        if verbose:
+            print('Running %d unit tests' % len(self.unit_tests))
+        self.results.unit_tests = [
+            Munch(passed=pd, test_fixtures=fs, results=rs)
+            for pd, fs, rs in (ut.run() for ut in self.unit_tests)
+        ]
+        
     def fail_idxs(self):
         self._check_results()
         return np.where(self.results.passed == False)[0]
 
+    def fail_idxs1(self, idx):
+        self._check_results()
+        return np.where(self.results.unit_tests[idx].passed == False)[0]
+    
     def filtered_idxs(self):
         self._check_results()
         return np.where(self.results.passed == None)[0]
 
+    def filtered_idxs1(self, idx):
+        self._check_results()
+        return np.where(self.results.unit_tests[idx].passed == None)[0]
+    
     def get_stats(self):
         stats = Munch()
         self._check_results()
@@ -399,9 +425,37 @@ class AbstractTest(ABC):
             stats.fail_rate = 100 * fails / nonfiltered
         return stats
 
-
     def print_stats(self):
         stats = self.get_stats()
+        print('Test cases:      %d' % stats.testcases)
+        if 'testcases_run' in stats:
+            print('Test cases run:  %d' % stats.testcases_run)
+        if 'after_filtering' in stats:
+            print('After filtering: %d (%.1f%%)' % (stats.after_filtering, stats.after_filtering_rate))
+        if 'fails' in stats:
+            print('Fails (rate):    %d (%.1f%%)' % (stats.fails, stats.fail_rate))
+    
+    def get_stats1(self, idx):
+        stats = Munch()
+        self._check_results()
+        n_run = n = len(self.results.unit_tests[idx].results.pred)
+        fails = self.fail_idxs1(idx).shape[0]
+        filtered = self.filtered_idxs1(idx).shape[0]
+        nonfiltered = n_run - filtered
+        stats.testcases = n
+        if n_run != n:
+            stats.testcases_run = n_run
+        if filtered:
+            stats.after_filtering = nonfiltered
+            stats.after_filtering_rate = 100 * nonfiltered / n_run
+        if nonfiltered != 0:
+            stats.fails = fails
+            stats.fail_rate = 100 * fails / nonfiltered
+        return stats
+
+
+    def print_stats1(self, idx):
+        stats = self.get_stats1(idx)
         print('Test cases:      %d' % stats.testcases)
         if 'testcases_run' in stats:
             print('Test cases run:  %d' % stats.testcases_run)
@@ -474,6 +528,55 @@ class AbstractTest(ABC):
             print_fn(self.data[d_idx], self.results.preds[d_idx],
                      self.results.confs[d_idx], self.results.expect_results[f],
                      label, meta, format_example_fn, nsamples=n_per_testcase)
+
+    def summary1(self, n=1, print_fn=None, format_example_fn=None, n_per_testcase=3):
+        """Print stats and example failures
+
+        Parameters
+        ----------
+        n : int
+            number of example failures to show
+        print_fn : function
+            If not None, use this to print a failed test case.
+            Arguments: (xs, preds, confs, expect_results, labels=None, meta=None)
+        format_example_fn : function
+            If not None, use this to print a failed example within a test case
+            Arguments: (x, pred, conf, label=None, meta=None)
+        n_per_testcase : int
+            Maximum number of examples to show for each test case
+        """
+        for idx in range(len(self.unit_tests)):
+            print('\n%s\n' % self.unit_tests[idx].name)
+            self.print_stats1(idx)
+            if not n:
+                return
+            if print_fn is None:
+                print_fn = self.print1
+            def default_format_example(idx, test_fixtures, results, *args, **kwargs):
+                output = []
+                for k, v in test_fixtures.items():
+                    output.append('%s:    %s' % (k, v[idx]))
+                output.append('\nStandard:    %s' % results.standard[idx])
+                for k, v in results.items():
+                    if k == 'standard': continue
+                    output.append('%s:    %s' % (k, v[idx]))
+                return '\n'.join(output)
+
+            if format_example_fn is None:
+                format_example_fn = default_format_example
+            fails = self.fail_idxs1(idx)
+            if fails.shape[0] == 0:
+                return
+            print()
+            print('Example fails:')
+            fails = np.random.choice(fails, min(fails.shape[0], n), replace=False)
+            for f in fails:
+                d_idx = f if self.run_idxs is None else self.run_idxs[f]
+                # should be format_fn
+                # label, meta = self._label_meta(d_idx)
+                # print(label, meta)
+                print_fn(d_idx, self.results.unit_tests[idx].test_fixtures, self.results.unit_tests[idx].results, \
+                         format_example_fn, nsamples=n_per_testcase)
 
     def _form_examples_per_testcase_for_viz(
         self, xs, preds, confs, expect_results, labels=None, meta=None, nsamples=3):

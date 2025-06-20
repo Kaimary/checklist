@@ -1,0 +1,49 @@
+You are a data science expert.
+Below, you are presented with a database schema and a question.
+Your task is to:
+- Read and understand the schema and the natural language (NL) question.
+- Simulate the minimum valid database instance that satisfies the schema.
+- Provide the resulting data that would be returned when the NL query is executed on that database.
+
+Database Schema
+###
+{DATABASE_SCHEMA}
+
+This schema offers an in-depth description of the database's architecture, detailing tables, columns, primary keys, foreign keys, and any pertinent information regarding relationships or constraints. Special attention should be given to the examples listed beside each column, as they directly hint at which columns are relevant to our query.
+
+
+###
+Question: 
+{QUESTION}
+
+Hint:
+{HINT}
+
+Please respond with a JSON object structured as follows:
+
+{{
+    "chain_of_thought_reasoning": "Your thought process on how you think.",
+    "database_instances": {{
+        "table1" : [["a data row of table1"], ...]
+        "table2": [["a data row of table2"], ...]
+        ...
+    }}
+    "resulting_data": {{
+        "table.column": "value",
+        ....
+    }}
+}}
+Note that if no resulting data, please respond with a JSON object structured as follows:
+{{
+    "chain_of_thought_reasoning": "Your thought process on how you think.",
+    "database_instances": {{
+        "table1" : [["a data row of table1"], ...]
+        "table2": [["a data row of table2"], ...]
+        ...
+    }}
+    "resulting_data": {{
+            "unknown": ""
+    }}
+}}
+
+Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

@@ -52,7 +52,10 @@ setup(name='checklist',
         'ipywidgets>=7.5',
         'transformers>=2.8',
         'patternfork-nosql',
-        'pycountry'
+        'pycountry',
+        'func_timeout',
+        'psycopg2-binary',
+        'pymysql'
       ],
       cmdclass={
         'develop': PostDevelopCommand,

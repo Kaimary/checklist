@@ -273,6 +273,27 @@ class TestSuite:
                 print('Running', n)
             t.run(predict_and_confidence_fn, verbose=verbose, **kwargs)
 
+    def run1(self, verbose=True, **kwargs):
+        """Runs all tests in the suite
+        See run in abstract_test.py .
+
+        Parameters
+        ----------
+        overwrite : bool
+            If False, raise exception if results already exist
+        verbose : bool
+            If True, print extra information
+        n : int
+            If not None, number of samples to draw
+        seed : int
+            Seed to use if n is not None
+
+        """
+        for n, t in self.tests.items():
+            if verbose:
+                print('Running', n)
+            t.run1(verbose=verbose, **kwargs)
+            
     def summary(self, types=None, capabilities=None, **kwargs):
         """Print stats and example failures for each test.
         See summary in abstract_test.py

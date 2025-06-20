@@ -1,0 +1,25 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            // "args": [ // evaluation_ex.py
+            //     "--db_root_path", "data/minidev/dev_databases/",
+            //     "--predicted_sql_path", "mini_dev/llm/exp_result/sql_output_kg/predict_mini_dev_gpt-4-turbo_sqlite.json",
+            //     "--ground_truth_path", "data/minidev/mini_dev_sqlite_gold.sql",
+            //     "--num_cpus", "16",
+            //     "--output_log_path", "mini_dev/evaluation/eval_result/predict_mini_dev_gpt-4-turbo_sqlite.txt",
+            //     "--diff_json_path", "data/minidev/mini_dev_sqlite.jsonl",
+            //     "--meta_time_out", "30.0",
+            //     "--sql_dialect", "SQLite"
+            // ]
+        }
+    ]
+}

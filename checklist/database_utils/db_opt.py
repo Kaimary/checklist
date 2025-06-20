@@ -1,0 +1,53 @@
+import os, sqlite3
+
+def duplicate_sqlite_database(src_db_path, dest_db_path, reset=False):
+    source = sqlite3.connect(src_db_path)
+    dest = sqlite3.connect(dest_db_path)
+
+    # Copy using the backup function
+    with dest:
+        source.backup(dest)
+    
+    if reset: # Empty data instance
+        cursor = dest.cursor()
+        # Get all table names (excluding SQLite internal tables)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        tables = cursor.fetchall()
+        # Disable foreign key checks temporarily to avoid constraint issues
+        cursor.execute("PRAGMA foreign_keys = OFF")
+        for (table_name,) in tables:
+            cursor.execute(f"DELETE FROM {table_name}")
+        # Re-enable foreign keys
+        cursor.execute("PRAGMA foreign_keys = ON")
+        dest.commit()
+
+    source.close()
+    dest.close()
+    # print(f"Database copied from {os.path.basename(src_db_path)} to {dest_db_path}")
+    return
+
+def insert_rows_into_table(db_path, table_name, rows):
+    """
+    Insert multiple rows into a specified table in an SQLite database.
+
+    Parameters:
+        db_path (str): Path to the SQLite database file.
+        table_name (str): Name of the table to insert data into.
+        rows (list of tuples): List of data rows to insert. Each row should be a tuple.
+    """
+    if not rows: return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        # Determine number of columns from the first row
+        placeholders = ','.join('?' for _ in rows[0])
+        sql = f"INSERT INTO {table_name} VALUES ({placeholders})"
+
+        cursor.executemany(sql, rows)
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"SQLite error: {e}")
+    finally:
+        conn.close()
