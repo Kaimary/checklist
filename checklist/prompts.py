@@ -61,8 +61,9 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "nl2sql_translation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "revision": {"input_variables": ["SQL", "QUESTION", "MISSING_ENTITIES", "EVIDENCE", "QUERY_RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "oracle_data_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "query_relaxing_generation": {"input_variables": ["HINT", "QUESTION", "SQL"]},
-        "query_strengthening_generation": {"input_variables": ["HINT", "QUESTION", "SQL"]},
+        "nl_relaxing_generation": {"input_variables": ["HINT", "QUESTION", "SQL"]},
+        "nl_strengthening_generation": {"input_variables": ["HINT", "QUESTION", "SQL"]},
+        "nl_mutation_generation": {"input_variables": ["HINT", "QUESTION"]},
     }
 
     if template_name not in template_configs:

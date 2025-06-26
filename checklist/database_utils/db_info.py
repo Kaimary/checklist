@@ -1,3 +1,4 @@
+from collections import defaultdict
 import logging
 import random
 from typing import Any, List, Dict
@@ -92,5 +93,19 @@ def load_schema_with_examples(full_schema_with_examples: Dict[str, Any]):
             # Select one random value from the list of values
             random_value = random.choice(values)
             modified_schema[table][column] = [random_value]
+
+    return modified_schema
+
+def load_schema_with_simuated_examples(schema_with_examples: Dict[str, Any]):
+    modified_schema = {}
+
+    # Loop through each table in the original schema
+    for table, columns_dict in schema_with_examples.items():
+        modified_schema[table] = defaultdict(list)
+        
+        # Loop through each column in the current table
+        for column, values in columns_dict.items():
+            for value in values:
+                modified_schema[table][column].append(value)
 
     return modified_schema

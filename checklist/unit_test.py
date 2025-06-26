@@ -13,7 +13,7 @@ from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
-from checklist.database_utils.db_info import load_schema_with_examples
+from checklist.database_utils.db_info import load_schema_with_examples, load_schema_with_simuated_examples
 from checklist.database_utils.db_values.preprocess import _get_unique_values
 
 load_dotenv(override=True)
@@ -208,11 +208,152 @@ class OracleResultUnitTest(UnitTest):
             outputs.append(self._form_test_case(len(outputs), ret))
         return outputs
 
-class QueryRelaxUnitTest(UnitTest):
+class SanityCheckUnitTest(UnitTest):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
-        super().__init__("Query Relexing Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Step-through Sanity Check Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-        self.test_case_saved_path = os.path.join(TEST_CASE_ROOT_PATH, "metamorphic", "query_relax", db_id, hashing_nl_sql(nl, sql))
+
+        
+        self.test_case_saved_path = os.path.join(TEST_CASE_ROOT_PATH, "oracle", "sanity_check", db_id, hashing_nl_sql(nl, sql))
+        os.makedirs(self.test_case_saved_path, exist_ok=True)
+        
+        self.dm = DatabaseManager(db_id=self.db_id)
+        self.test_cases = self.generator()
+        
+    def set_settings(self, **kwargs):
+        self.num = kwargs.get("num")
+
+    def _compare_query_results(self, preds, raw_golds):
+        normalized = {
+            key: value if isinstance(value, list) else [value] 
+            for key, value in raw_golds.items()
+        }
+        golds = list(zip(*normalized.values()))
+        if set(preds) == set(golds):
+            return True
+        return False
+    
+    def _test_fn(self, ret: Munch):
+        ret.results = Munch()
+        # ret.description = "Test the original SQL over a faked database with expected execution results"
+        ret.results.pred = execute_sql(ret.test_fixtures.db, self.sql)
+        ret.results.target = ret.test_fixtures.label_result
+        ret.results.standard = "pred == target"
+        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        return passed, ret.test_fixtures, ret.results
+    
+    def _validate_test_fixture(self, ret):
+        """Validate the correctness (check if the schema matches, and the types match) of the output from LLM
+
+        Parameters
+        ----------
+        """
+        def __check_table_names(data, tables): return all(d in tables for d in data)
+        def __check_data_types(data, tables):
+            sqlite_type_map = {
+                'INTEGER': int,
+                'REAL': float,
+                'TEXT': str,
+                'BLOB': bytes,
+                'NUMERIC': float
+            }
+            for t, rows in data.items():
+                if not rows: continue
+                if len(tables[t]) != len(rows[0]): return False
+                
+                column_types = tables[t]
+                for v, t in zip(rows[0], column_types):
+                    expected_type = sqlite_type_map[t]
+                    try:
+                        expected_type(v)
+                    except (ValueError, TypeError):
+                        return False
+            return True
+        
+        table_names = DatabaseManager().get_db_all_tables()
+        if not __check_table_names(ret.test_fixtures.data.keys(), table_names): return False
+        column_types= DatabaseManager().get_all_column_types()
+        if not __check_data_types(ret.test_fixtures.data, column_types): return False
+        
+        return True
+    
+    def write_test_fixture_file(self, output_dir, **kwargs):
+        data = {
+            "database": kwargs.get("database"),
+            "sql": kwargs.get("sql"),
+            "expect": kwargs.get("expect")
+        }
+        output_path = os.path.join(output_dir, 'meta.json')
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        
+    def _form_test_case(self, idx, ret):
+        """
+        Form each single test case, and save related test fixture for serialization. 
+        Format as: <`db-file-with-generated-data`, `to-executed-sql`, `expected-executed-result`>
+        
+        Parameters
+        ----------
+        ret: Dict with `data` and `result` keys
+        No return value
+        """
+        test_case_root_path = os.path.join(self.test_case_saved_path, f"{idx}")
+        os.makedirs(test_case_root_path, exist_ok=True)
+        
+        # Create test data instances
+        ret.test_fixtures.db = os.path.join(test_case_root_path, f"{self.db_id}.sqlite")
+        duplicate_sqlite_database(self.db_path, ret.test_fixtures.db, reset=True)
+        for t, rows in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
+        # test case serialization
+        self.write_test_fixture_file(output_dir=test_case_root_path, 
+            database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.label_result)
+        
+        return ret
+    
+    def generator(self, verbose=True):
+        schema = DatabaseManager().get_db_schema() # type: ignore
+        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=None,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
+        prompt = get_prompt(template_name="sample_data_generation", schema_string=schema_string)
+        parser = get_parser(parser_name="sample_data_generation")
+        
+        outputs = []
+        while(len(outputs) < self.num):
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            response = self.GPT4o(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+            ret.test_fixtures.data = response["database_instances"]
+            
+            schema_with_examples = load_schema_with_simuated_examples(ret.test_fixtures.data)
+            schema_string = DatabaseManager().get_database_schema_string(
+                tentative_schema=schema,
+                schema_with_examples=schema_with_examples,
+                schema_with_descriptions=schema_with_descriptions,
+                include_value_description=True
+            )
+            prompt2 = get_prompt(template_name="simulate_sql_execution", schema_string=schema_string)
+            parser2 = get_parser(parser_name="simulate_sql_execution")
+            response = self.GPT4o(prompt2, parser2, request_kwargs={"HINT": self.hint, "QUESTION": self.nl, "QUERY": self.sql})
+            ret.test_fixtures.data = response["database_instances"]
+            if not self._validate_test_fixture(ret): 
+                if verbose: print(f"Generated test fixture validation failed! Retry...")
+                continue
+            outputs.append(self._form_test_case(len(outputs), ret))
+        return outputs
+
+
+
+class NLRelaxUnitTest(UnitTest):
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
+        super().__init__("Natural Language Relexing Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        self.test_case_saved_path = os.path.join(TEST_CASE_ROOT_PATH, "metamorphic", "nl_relax", db_id, hashing_nl_sql(nl, sql))
         os.makedirs(self.test_case_saved_path, exist_ok=True)
 
         self.test_cases = self.generator()
@@ -277,8 +418,8 @@ class QueryRelaxUnitTest(UnitTest):
         return ret
     
     def generator(self, verbose=True):
-        prompt = get_prompt(template_name="query_relaxing_generation")
-        parser = get_parser(parser_name="query_relaxing_generation")
+        prompt = get_prompt(template_name="nl_relaxing_generation")
+        parser = get_parser(parser_name="nl_relaxing_generation")
         outputs = []
         while(len(outputs) < self.num):
             ret = Munch()
@@ -300,11 +441,11 @@ class QueryRelaxUnitTest(UnitTest):
             outputs.append(self._form_test_case(len(outputs), ret))
         return outputs
     
-class QueryStrengthenUnitTest(UnitTest):
+class NLStrengthenUnitTest(UnitTest):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
-        super().__init__("Query Strengthening Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Natural Language Strengthening Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-        self.test_case_saved_path = os.path.join(TEST_CASE_ROOT_PATH, "oracle", "oracle_result", db_id, hashing_nl_sql(nl, sql))
+        self.test_case_saved_path = os.path.join(TEST_CASE_ROOT_PATH, "metamorphic", "nl_strengthen", db_id, hashing_nl_sql(nl, sql))
         os.makedirs(self.test_case_saved_path, exist_ok=True)
         
         self.test_cases = self.generator()
@@ -368,8 +509,8 @@ class QueryStrengthenUnitTest(UnitTest):
         return ret
     
     def generator(self, verbose=True):
-        prompt = get_prompt(template_name="query_strengthening_generation")
-        parser = get_parser(parser_name="query_strengthening_generation")
+        prompt = get_prompt(template_name="nl_strengthening_generation")
+        parser = get_parser(parser_name="nl_strengthening_generation")
         outputs = []
         while(len(outputs) < self.num):
             ret = Munch()
@@ -391,6 +532,105 @@ class QueryStrengthenUnitTest(UnitTest):
             outputs.append(self._form_test_case(len(outputs), ret))
         return outputs
 
+class QueryConsistencyUnitTest(UnitTest):
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, model=None, num=10):
+        super().__init__("Query Consistency Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        if model is None:
+            raise(Exception('No model provided. Please specify your NL2SQL model first'))
+        self.model = model
+        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        
+        self.test_case_saved_path = os.path.join(TEST_CASE_ROOT_PATH, "metamorphic", "query_consistency", db_id, hashing_nl_sql(nl, sql))
+        os.makedirs(self.test_case_saved_path, exist_ok=True)
+
+        self.dm = DatabaseManager(db_id=self.db_id)
+        self.test_cases = self.generator()
+        
+    def set_settings(self, **kwargs):
+        self.num = kwargs.get("num")
+    
+    def _compare_query_results(self, pred, target):
+        if set(target) == set(pred):
+            return True
+        return False
+    
+    def _test_fn(self, ret: Munch):
+        ret.results = Munch()
+        ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.predict_sql)
+        ret.results.target = execute_sql(self.db_path, self.sql)
+        ret.results.standard = "pred == target"
+        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        return passed, ret.test_fixtures, ret.results
+    
+    
+    def _validate_test_fixture(self, ret):
+        # Check if the mutanted SQL is valid
+        return validate_sql_query(self.db_path, ret.test_fixtures.predict_sql)["STATUS"] == "OK"
+    
+    def write_test_fixture_file(self, output_dir, **kwargs):
+        data = {
+            "nl": kwargs.get("nl"),
+            "sql": kwargs.get("sql"),
+            "nl_mutant": kwargs.get("nl_mutant"),
+            "predict_sql": kwargs.get("predict_sql")
+        }
+        output_path = os.path.join(output_dir, 'meta.json')
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        
+    def _form_test_case(self, idx, ret):
+        test_case_root_path = os.path.join(self.test_case_saved_path, f"{idx}")
+        os.makedirs(test_case_root_path, exist_ok=True)
+        
+        # test case serialization
+        self.write_test_fixture_file(output_dir=test_case_root_path, 
+            nl=self.nl,
+            sql=self.sql, 
+            nl_mutant=ret.test_fixtures.nl_mutant,
+            predict_sql=ret.test_fixtures.predict_sql)
+        
+        return ret
+    
+    def generator(self, verbose=True):
+        prompt = get_prompt(template_name="nl_mutation_generation")
+        parser = get_parser(parser_name="nl_mutation_generation")
+        
+        schema = DatabaseManager().get_db_schema() # type: ignore
+        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=schema_with_examples,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
+        prompt2 = get_prompt(template_name="nl2sql_translation", schema_string=schema_string)
+        parser2 = get_parser(parser_name="nl2sql_translation")
+        outputs = []
+        while(len(outputs) < self.num):
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            nl_mutant = self.GPT4o(prompt, parser, 
+                request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl
+                }
+            )["NL"]
+            pred = self.model(prompt2, parser2, 
+                request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": nl_mutant
+                }
+            )["SQL"]
+            ret.test_fixtures.nl_mutant = nl_mutant
+            ret.test_fixtures.predict_sql = pred
+            if not self._validate_test_fixture(ret): 
+                if verbose: print(f"Generated test fixture validation failed! Retry...")
+                continue
+            outputs.append(self._form_test_case(len(outputs), ret))
+        return outputs
+    
+    
 class MajorityVoteUnitTest(UnitTest):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=3, active_llm_num=3):
         super().__init__("Majority Voting Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)

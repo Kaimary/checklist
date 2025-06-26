@@ -34,12 +34,12 @@ for pred, ex in zip(preds, data):
     # with spinner:
     
     # suite = TestSuite()
-    test1 = ORC(nl, hint, pred, sql_dialect, db_id, db_path)
-    # test2 = MTP(nl, hint, sql, sql_dialect, db_id, db_path)
-    # test3 = DIF(nl, hint, sql, sql_dialect, db_id, db_path)
+    # test1 = ORC(nl, hint, pred, sql_dialect, db_id, db_path)
+    # test2 = MTP(nl, hint, pred, sql_dialect, db_id, db_path)
+    test3 = DIF(nl, hint, pred, sql_dialect, db_id, db_path)
     # suite.add(test1)
     # suite.add(test2)
     # suite.add(test3)
     
-    test1.run1()
-    test1.summary1()
+    test3.run1()
+    test3.summary1()

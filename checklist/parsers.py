@@ -90,8 +90,12 @@ class MarkDownOutputParser(BaseOutputParser):
         logging.debug(f"Parsing output with MarkDownOutputParser: {output}")
         if "```sql" in output:
             output = output.split("```sql")[1].split("```")[0]
-        output = re.sub(r"^\s+", "", output)
-        return {"SQL": output}
+            output = re.sub(r"^\s+", "", output)
+            return {"SQL": output}
+        elif "```nl" in output:
+            output = output.split("```nl")[1].split("```")[0]
+            output = re.sub(r"^\s+", "", output)
+            return {"NL": output}
 
 class SQLRevisionOutput(BaseModel):
     """Model for SQL revision output."""
@@ -136,8 +140,9 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "nl2sql_translation": MarkDownOutputParser,
         "revision": lambda: JsonOutputParser(pydantic_object=SQLRevisionOutput),
         "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
-        "query_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
-        "query_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
+        "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
+        "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
+        "nl_mutation_generation": MarkDownOutputParser,
     }
 
     if parser_name not in parser_configs:
