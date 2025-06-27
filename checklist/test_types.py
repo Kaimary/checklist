@@ -1,6 +1,6 @@
 from munch import Munch
 from checklist.llm import LLM
-from checklist.unit_test import MajorityVoteUnitTest, OracleResultUnitTest, NLRelaxUnitTest, NLStrengthenUnitTest, QueryConsistencyUnitTest
+from checklist.unit_test import MajorityVoteUnitTest, OracleResultUnitTest, NLRelaxUnitTest, NLStrengthenUnitTest, QueryConsistencyUnitTest, SanityCheckUnitTest
 from .abstract_test import AbstractTest
 from .expect import Expect
 
@@ -172,7 +172,10 @@ class ORC(AbstractTest):
         self.db_id = db_id
         self.db_path = db_path
         
-        self.unit_tests = [OracleResultUnitTest(nl, hint, sql, sql_dialect, db_id, db_path, num=5)]
+        self.unit_tests = [
+            OracleResultUnitTest(nl, hint, sql, sql_dialect, db_id, db_path, num=5),
+            SanityCheckUnitTest(nl, hint, sql, sql_dialect, db_id, db_path, num=5)
+        ]
         
 
 class MTP(AbstractTest):
