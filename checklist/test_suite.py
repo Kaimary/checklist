@@ -3,7 +3,7 @@ from collections import defaultdict, OrderedDict
 import dill
 import json
 from .abstract_test import load_test, read_pred_file
-from .test_types import MFT, INV, DIR
+from .test_stores import MFT, INV, DIR
 
 from .viewer.suite_summarizer import SuiteSummarizer
 

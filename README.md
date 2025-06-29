@@ -334,7 +334,7 @@ MFT:
 import checklist
 from checklist.editor import Editor
 from checklist.perturb import Perturb
-from checklist.test_types import MFT, INV, DIR
+from checklist.test_stores import MFT, INV, DIR
 editor = Editor()
 
 t = editor.template('This is {a:adj} {mask}.',  

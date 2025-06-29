@@ -55,7 +55,7 @@ checklist.test\_suite module
 checklist.test\_types module
 ----------------------------
 
-.. automodule:: checklist.test_types
+.. automodule:: checklist.test_stores
    :members:
    :undoc-members:
    :show-inheritance:
