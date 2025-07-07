@@ -96,7 +96,7 @@ def load_schema_with_examples(full_schema_with_examples: Dict[str, Any]):
 
     return modified_schema
 
-def load_schema_with_simuated_examples(schema_with_examples: Dict[str, Any]):
+def load_schema_with_simulated_examples(schema_with_examples: Dict[str, Any]):
     modified_schema = {}
 
     # Loop through each table in the original schema
