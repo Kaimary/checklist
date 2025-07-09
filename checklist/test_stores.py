@@ -1,6 +1,6 @@
 from munch import Munch
 from checklist.llm import LLM
-from checklist.test_cases import CrossModelTestCase, OracleResultTestCase, NLRelaxTestCase, NLStrengthenTestCase, SelfConsistencyTestCase, QueryReviewTestCase
+from checklist.test_cases import CrossModelTestCase, NLReviewTestCase, OracleResultTestCase, NLRelaxTestCase, NLStrengthenTestCase, SelfConsistencyTestCase, QueryReviewTestCase
 from .abstract_test import AbstractTest
 from .expect import Expect
 
@@ -269,5 +269,6 @@ class EXP(AbstractTest):
         self.db_path = db_path
         
         self.unit_tests = [
-            QueryReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path)
+            QueryReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path),
+            NLReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path)
         ]
