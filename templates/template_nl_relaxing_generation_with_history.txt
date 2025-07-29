@@ -15,13 +15,6 @@ HINT:
 SQL:
 {QUERY}
 
-Previously Generated Metamorphic Relations  (do NOT repeat these relations)
-###
-{PREVIOUS}
-
-This section lists all previously generated metamorphic relations to help avoid repeating them in the future.
-
-
 Please respond with a JSON object structured as follows.
 
 {{
@@ -31,5 +24,11 @@ Please respond with a JSON object structured as follows.
     "nl_mutant": "the NL transformed from original NL",
     "sql_mutant": "the query transformed from original SQL"
 }}
+
+Below are previously generated metamorphic relations:
+###
+{PREVIOUS}
+
+DO NOT repeat any of them! Please generate diverse metamorphic relations wherever possible.
 
 Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

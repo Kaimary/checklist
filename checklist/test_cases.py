@@ -82,7 +82,7 @@ class TestCase(ABC):
                 
         return np.array(passes), fixtures, results
 
-# Done
+
 class OracleResultTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
         super().__init__("Oracle Result Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
@@ -270,7 +270,7 @@ class OracleResultTestCase(TestCase):
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
-# Done
+
 class NLRelaxTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
         super().__init__("Natural Language Relexing Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
@@ -296,8 +296,8 @@ class NLRelaxTestCase(TestCase):
         return passed, ret.test_fixtures, ret.results
     
     def _validate_test_fixture(self, ret):
-        # Seems nothing need to be checked at this moment
-        return True
+        # Check if the mutanted SQL is valid
+        return validate_sql_query(self.db_path, ret.test_fixtures.sql_mutant)["STATUS"] == "OK"
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -384,12 +384,12 @@ class NLRelaxTestCase(TestCase):
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
-# Done
+
 class NLStrengthenTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
         super().__init__("Natural Language Strengthening Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", db_id, hashing(nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
         self.instances = self._generator()
@@ -586,7 +586,7 @@ class CrossModelTestCase(TestCase):
                 continue
             outputs.append(self._form_instance(len(outputs), ret))
         return outputs
-# Done
+
 class SelfConsistencyTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, model=None, num=10):
         super().__init__("Query Consistency Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
@@ -702,7 +702,7 @@ class SelfConsistencyTestCase(TestCase):
             history.append(ret.test_fixtures)
             outputs.append(self._form_instance(len(outputs), ret))
         return outputs
-# Done
+
 class QueryReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Query Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
@@ -834,7 +834,7 @@ class QueryReviewTestCase(TestCase):
             outputs.append(self._form_instance(len(outputs), ret))
         
         return outputs
-# Done
+
 class NLReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Natural Language Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)

@@ -1,7 +1,7 @@
 You are a data science expert.
 Below, you are presented with a natural language question and a SQL query.
 Your task is to read and understand the natural language (NL) question and its corresponding SQL query, and then define a metamorphic relation that strengthens both the NL question and the SQL query.
-By relax, we mean:
+By strengthen, we mean:
 - Add or strengthen an existing constraint present in both the NL and the SQL query;
 - After applying this restriction, the output count of the transformed SQL query should be not greater than that of the original SQL query.
 

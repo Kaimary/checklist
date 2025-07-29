@@ -10,13 +10,10 @@ Question:
 HINT:
 {HINT}
 
-Previously Generated NL Mutations (do NOT repeat these NLs)
+Below are previously generated NL mutations:
 ###
 {PREVIOUS}
 
-This section lists all previously generated NL mutations to help avoid repeating them in future.
-
-
-
+DO NOT repeat any of them! Please generate diverse NL mutations wherever possible.
 
 Please respond with an NL between ```nl and ``` with same semantics.

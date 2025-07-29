@@ -191,7 +191,7 @@ class MTP(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
@@ -205,6 +205,7 @@ class MTP(AbstractTest):
         self.sql_dialect=sql_dialect
         self.db_id = db_id
         self.db_path = db_path
+        self.pred_match_gold = pred_match_gold
         
         self.key = "nl+schema+sql"
         
