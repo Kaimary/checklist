@@ -67,7 +67,7 @@ def read_pred_file(path, file_format=None, format_fn=None, ignore_header=False):
 class AbstractTest(ABC):
     def __init__(self, data, expect, labels=None, meta=None, agg_fn='all',
                  templates=None, print_first=None, name=None, capability=None,
-                 description=None, unit_tests=[]):
+                 description=None,test_cases=[]):
         self.data = data
         self.expect = expect
         self.labels = labels
@@ -80,7 +80,7 @@ class AbstractTest(ABC):
         self.name = name
         self.capability = capability
         self.description = description
-        self.unit_tests = unit_tests
+        self.test_cases = test_cases
         
     def save(self, file):
         dill.dump(self, open(file, 'wb'), recurse=True)
@@ -383,10 +383,10 @@ class AbstractTest(ABC):
         # examples, result_indexes = self.example_list_and_indices(n, seed=seed)
 
         if verbose:
-            print('Running %d unit tests' % len(self.unit_tests))
-        self.results.unit_tests = [
+            print('Running %d unit tests' % len(self.test_cases))
+        self.results.test_cases = [
             Munch(passed=pd, test_fixtures=fs, results=rs)
-            for pd, fs, rs in (ut.run() for ut in self.unit_tests)
+            for pd, fs, rs in (ut.run() for ut in self.test_cases)
         ]
         
     def fail_idxs(self):
@@ -395,7 +395,7 @@ class AbstractTest(ABC):
 
     def fail_idxs1(self, idx):
         self._check_results()
-        return np.where(self.results.unit_tests[idx].passed == False)[0]
+        return np.where(self.results.test_cases[idx].passed == False)[0]
     
     def filtered_idxs(self):
         self._check_results()
@@ -403,7 +403,7 @@ class AbstractTest(ABC):
 
     def filtered_idxs1(self, idx):
         self._check_results()
-        return np.where(self.results.unit_tests[idx].passed == None)[0]
+        return np.where(self.results.test_cases[idx].passed == None)[0]
     
     def get_stats(self):
         stats = Munch()
@@ -438,11 +438,23 @@ class AbstractTest(ABC):
     def get_stats1(self, idx):
         stats = Munch()
         self._check_results()
-        n_run = n = len(self.results.unit_tests[idx].results.pred)
+        n_run = n = len(self.results.test_cases[idx].results.pred)
         fails = self.fail_idxs1(idx).shape[0]
         filtered = self.filtered_idxs1(idx).shape[0]
         nonfiltered = n_run - filtered
         stats.testcases = n
+        if self.pred_match_gold is not None and self.pred_match_gold:
+            TP = n_run - fails  # correct SQL and test case passed
+            FN = fails   # correct SQL but test case failed (shouldn't have)
+            FP = 0
+            TN = 0
+        else:
+            # SQL is incorrect
+            TP = 0
+            FN = 0
+            FP = n_run - fails  # wrong SQL but test case passed (shouldn't have)
+            TN = fails 
+        
         if n_run != n:
             stats.testcases_run = n_run
         if filtered:
@@ -451,6 +463,7 @@ class AbstractTest(ABC):
         if nonfiltered != 0:
             stats.fails = fails
             stats.fail_rate = 100 * fails / nonfiltered
+            
         return stats
 
 
@@ -545,8 +558,8 @@ class AbstractTest(ABC):
         n_per_testcase : int
             Maximum number of examples to show for each test case
         """
-        for idx in range(len(self.unit_tests)):
-            print('\n%s\n' % self.unit_tests[idx].name)
+        for idx in range(len(self.test_cases)):
+            print('\n%s\n' % self.test_cases[idx].name)
             self.print_stats1(idx)
             if not n:
                 return
@@ -575,7 +588,7 @@ class AbstractTest(ABC):
                 # should be format_fn
                 # label, meta = self._label_meta(d_idx)
                 # print(label, meta)
-                print_fn(d_idx, self.results.unit_tests[idx].test_fixtures, self.results.unit_tests[idx].results, \
+                print_fn(d_idx, self.results.test_cases[idx].test_fixtures, self.results.test_cases[idx].results, \
                          format_example_fn, nsamples=n_per_testcase)
 
     def _form_examples_per_testcase_for_viz(

@@ -158,7 +158,7 @@ class ORC(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
@@ -171,8 +171,11 @@ class ORC(AbstractTest):
         self.sql_dialect=sql_dialect
         self.db_id = db_id
         self.db_path = db_path
+        self.pred_match_gold = pred_match_gold
         
-        self.unit_tests = [
+        self.key = "nl+schema"
+        
+        self.test_cases = [
             OracleResultTestCase(nl, hint, sql, sql_dialect, db_id, db_path, num=5)
         ]
 
@@ -188,7 +191,7 @@ class MTP(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
@@ -203,8 +206,9 @@ class MTP(AbstractTest):
         self.db_id = db_id
         self.db_path = db_path
         
+        self.key = "nl+schema+sql"
         
-        self.unit_tests = [
+        self.test_cases = [
             NLRelaxTestCase(nl, hint, sql, sql_dialect, db_id, db_path, num=3),
             NLStrengthenTestCase(nl, hint, sql, sql_dialect, db_id, db_path, num=3)
         ]
@@ -221,7 +225,7 @@ class DIF(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
@@ -236,7 +240,9 @@ class DIF(AbstractTest):
         self.db_id = db_id
         self.db_path = db_path
         
-        self.unit_tests = [
+        self.key = "nl+schema"
+        
+        self.test_cases = [
             CrossModelTestCase(nl, hint, sql, sql_dialect, db_id, db_path, num=3),
             SelfConsistencyTestCase(nl, hint, sql, sql_dialect, db_id, db_path, num=3,
                                      model=LLM(model_name="gpt-4o-mini-0708"))]
@@ -253,7 +259,7 @@ class EXP(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
@@ -268,7 +274,9 @@ class EXP(AbstractTest):
         self.db_id = db_id
         self.db_path = db_path
         
-        self.unit_tests = [
-            QueryReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path),
-            NLReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path)
+        self.key = "nl+schema+sql"
+        
+        self.test_cases = [
+            QueryReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path, use_cache=use_cache),
+            NLReviewTestCase(nl, hint, sql, sql_dialect, db_id, db_path, use_cache=use_cache)
         ]

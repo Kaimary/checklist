@@ -107,6 +107,10 @@ class OracleDataGenerationOutput(BaseModel):
     database_instances: Dict[str, Any] = Field(description="The generated data instances based on the database schema")
     resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
     
+class OracleResultCheckingOutput(BaseModel):
+    """Model for oracle result checking output."""
+    resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
+
 class QueryRelaxingOutput(BaseModel):
     """Model for query relaxing constraint generation output."""
     chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
@@ -140,6 +144,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "nl2sql_translation": MarkDownOutputParser,
         "revision": lambda: JsonOutputParser(pydantic_object=SQLRevisionOutput),
         "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
+        "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
         "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_mutation_generation": MarkDownOutputParser,

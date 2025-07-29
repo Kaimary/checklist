@@ -18,18 +18,23 @@ from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
 from checklist.database_utils.db_info import load_schema_with_examples, load_schema_with_simulated_examples
 from checklist.database_utils.db_values.preprocess import _get_unique_values
+from spinner import Spinner
 
 load_dotenv(override=True)
 TEST_INSTANCE_ROOT_PATH = Path(os.getenv("TEST_INSTANCE_ROOT_PATH"))
 
-def hashing_nl_sql(nl, sql):
-    normalized_sql = re.sub(r"\s+", " ", sql.strip().lower())
-    combined = f"{nl}_{normalized_sql}".encode()
-    hashing_str = hashlib.md5(combined).hexdigest()[:8]
+def hashing(schema, nl=None, sql=None):
+    combined = schema
+    if nl is not None: combined += f";{nl}"
+    if sql is not None: 
+        normalized_sql = re.sub(r"\s+", " ", sql.strip().lower())
+        combined += f";{normalized_sql}"
+    hashing_str = hashlib.md5(combined.encode()).hexdigest()[:8]
+    
     return hashing_str
 
 class TestCase(ABC):
-    def __init__(self, name, nl, hint, sql, sql_dialect, db_id, db_path, num=-1):
+    def __init__(self, name, nl, hint, sql, sql_dialect, db_id, db_path, num=-1, use_cache=True):
         self.name = name
         self.num = num
         self.nl=nl
@@ -38,6 +43,7 @@ class TestCase(ABC):
         self.sql_dialect=sql_dialect
         self.db_id=db_id
         self.db_path=db_path
+        self.use_cache=use_cache
         
         self.instances = []
         self.test_fn = self._test_fn
@@ -82,13 +88,21 @@ class OracleResultTestCase(TestCase):
         super().__init__("Oracle Result Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
 
-        
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "oracle", "oracle_result", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(
+            TEST_INSTANCE_ROOT_PATH, "oracle", "oracle_result", db_id, hashing(db_id, nl=nl))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.dm = DatabaseManager(db_id=self.db_id)
+        schema = DatabaseManager(db_id=self.db_id).get_db_schema() # type: ignore
+        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=None, # type: ignore
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
         self.instances = self._generator()
-        
+                
     def set_settings(self, **kwargs):
         self.num = kwargs.get("num")
 
@@ -111,7 +125,7 @@ class OracleResultTestCase(TestCase):
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
     
-    def _validate_test_fixture(self, response):
+    def _validate_test_fixture(self, response, history):
         """Validate the correctness (check if the schema matches, and the types match) of the output from LLM
 
         Parameters
@@ -124,7 +138,8 @@ class OracleResultTestCase(TestCase):
                 'REAL': float,
                 'TEXT': str,
                 'BLOB': bytes,
-                'NUMERIC': float
+                'NUMERIC': float,
+                'DATE': str
             }
             for t, rows in data.items():
                 if not rows: continue
@@ -138,6 +153,44 @@ class OracleResultTestCase(TestCase):
                     except (ValueError, TypeError):
                         return False
             return True
+        def __check_response_history_compatible(response, history):
+            def __dicts_equal___(d1, d2):
+                if d1.keys() != d2.keys():
+                    return False
+                
+                for key in d1:
+                    v1, v2 = d1[key], d2[key]
+                    # If both are lists, check order-insensitive equality
+                    if isinstance(v1, list) and isinstance(v2, list):
+                        # Convert inner lists to tuples (hashable) for set comparison
+                        set1 = set(tuple(item) for item in v1)
+                        set2 = set(tuple(item) for item in v2)
+                        if set1 != set2:
+                            return False
+                    else:
+                        if v1 != v2:
+                            return False
+                return True
+            
+            for h in history:
+                if not __dicts_equal___(response["database_instances"], h["data"]): continue
+                # Check whether result is the same or not if instances are same. If it is the case, drop it
+                if __dicts_equal___(response["resulting_data"], h["label_result"]): return False
+                # Otherwise, double check which `result` is the correct one
+                prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
+                parser = get_parser(parser_name="oracle_result_checking")
+                response = self.GPT4o(prompt, parser, request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl,
+                    "INSTANCES": json.dumps(h['data'], indent=4),
+                    "RESULT1": json.dumps(h['label_result'], indent=4),
+                    "RESULT2": json.dumps(response["resulting_data"], indent=4)
+                })
+                # Modify the `result` according to the output (TODO further check its correctness?)
+                h['label_result'] = response["resulting_data"]
+                return False
+            
+            return True
         
         # Check required keys exist
         if "database_instances" not in response.keys() or "resulting_data" not in response.keys(): return False
@@ -147,7 +200,8 @@ class OracleResultTestCase(TestCase):
         # Check data types consistent
         column_types= DatabaseManager().get_all_column_types()
         if not __check_data_types(response["database_instances"], column_types): return False
-        
+        # Check if duplicate response generated
+        if not __check_response_history_compatible(response, history): return False
         return True
     
     def write_test_fixture_file(self, output_dir, **kwargs):
@@ -187,54 +241,41 @@ class OracleResultTestCase(TestCase):
         def __history_to_string(history):
             return "\n".join(
                 f"--- Example {i+1} ---\n"
-                f"database_instances: {json.dumps(h['instances'], indent=4)}\n\n"
-                f"resulting_data: {json.dumps(h['result'], indent=4)}"
+                f"database_instances: {json.dumps(h['data'], indent=4)}\n\n"
+                # f"resulting_data: {json.dumps(h['label_result'], indent=4)}"
                 for i, h in enumerate(history)
             )
 
-        schema = DatabaseManager().get_db_schema() # type: ignore
-        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=schema_with_examples,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
-        prompt = get_prompt(template_name="oracle_data_generation", schema_string=schema_string)
-        prompt2 = get_prompt(template_name="oracle_data_generation_with_history", schema_string=schema_string)
+        prompt = get_prompt(template_name="oracle_data_generation", schema_string=self.schema_string)
+        prompt2 = get_prompt(template_name="oracle_data_generation_with_history", schema_string=self.schema_string)
         parser = get_parser(parser_name="oracle_data_generation")
         history, outputs = [], []
-        while(len(outputs) < self.num):
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            if history:
-                response = self.GPT4o(prompt2, parser, \
-                    request_kwargs={"HINT": self.hint, "QUESTION": self.nl, "PREVIOUS": __history_to_string(history)})
-            else:
-                response = self.GPT4o(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
-            # ret.data = {
-            #     "customers": [
-            #         [1, None, 'EUR'],
-            #         [2, None, 'EUR'],
-            #         [3, None, 'CZK']
-            #     ]
-            # }
-            # ret.result = {'ratio': 2}
-            if not self._validate_test_fixture(response): 
-                if verbose: print(f"Generated test fixture validation failed! Retry...")
-                continue
-            ret.test_fixtures.data = response["database_instances"]
-            ret.test_fixtures.label_result = response["resulting_data"]
-            history.append(ret.test_fixtures)
-            outputs.append(self._form_instance(len(outputs), ret))
+        
+        spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
+        with spinner:
+            while(len(outputs) < self.num):
+                ret = Munch()
+                ret.test_fixtures = Munch()
+                if history:
+                    response = self.GPT4o(prompt2, parser, \
+                        request_kwargs={"HINT": self.hint, "QUESTION": self.nl, "PREVIOUS": __history_to_string(history)})
+                else:
+                    response = self.GPT4o(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+                if not self._validate_test_fixture(response, history): 
+                    if verbose: print(f"Generated test fixture validation failed! Retry...")
+                    continue
+                ret.test_fixtures.data = response["database_instances"]
+                ret.test_fixtures.label_result = response["resulting_data"]
+                history.append(ret.test_fixtures)
+                outputs.append(self._form_instance(len(outputs), ret))
+                spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
 # Done
 class NLRelaxTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
         super().__init__("Natural Language Relexing Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", db_id, hashing(db_id, nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
         self.instances = self._generator()
@@ -305,40 +346,43 @@ class NLRelaxTestCase(TestCase):
                 f"sql mutation: {h.sql_mutant}\n\n"
                 for i, h in enumerate(history)
             )
-            
+        
         prompt = get_prompt(template_name="nl_relaxing_generation")
         prompt2 = get_prompt(template_name="nl_relaxing_generation_with_history")
         parser = get_parser(parser_name="nl_relaxing_generation")
         history, outputs = [], []
-        while(len(outputs) < self.num):
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            if history:
-                response = self.GPT4o(prompt, parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl, 
-                        "QUERY": self.sql,
-                        "PREVIOUS": __history_to_string(history)
-                    }
-                )
-            else:
-                response = self.GPT4o(prompt, parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl, 
-                        "QUERY": self.sql
-                    }
-                )
-            ret.type = response["type"]
-            ret.desc = response["description"]
-            ret.test_fixtures.nl_mutant = response["nl_mutant"]
-            ret.test_fixtures.sql_mutant = response["sql_mutant"]
-            if not self._validate_test_fixture(ret): 
-                if verbose: print(f"Generated test fixture validation failed! Retry...")
-                continue
-            history.append(ret.test_fixtures)
-            outputs.append(self._form_instance(len(outputs), ret))
+        spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
+        with spinner:
+            while(len(outputs) < self.num):
+                ret = Munch()
+                ret.test_fixtures = Munch()
+                if history:
+                    response = self.GPT4o(prompt2, parser, 
+                        request_kwargs={
+                            "HINT": self.hint,
+                            "QUESTION": self.nl,
+                            "QUERY": self.sql,
+                            "PREVIOUS": __history_to_string(history)
+                        }
+                    )
+                else:
+                    response = self.GPT4o(prompt, parser, 
+                        request_kwargs={
+                            "HINT": self.hint, 
+                            "QUESTION": self.nl, 
+                            "QUERY": self.sql
+                        }
+                    )
+                ret.type = response["type"]
+                ret.desc = response["description"]
+                ret.test_fixtures.nl_mutant = response["nl_mutant"]
+                ret.test_fixtures.sql_mutant = response["sql_mutant"]
+                if not self._validate_test_fixture(ret): 
+                    if verbose: print(f"Generated test fixture validation failed! Retry...")
+                    continue
+                history.append(ret.test_fixtures)
+                outputs.append(self._form_instance(len(outputs), ret))
+                spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
 # Done
 class NLStrengthenTestCase(TestCase):
@@ -665,7 +709,7 @@ class QueryReviewTestCase(TestCase):
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
 
         
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", db_id, hashing_nl_sql())
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
         self.dm = DatabaseManager(db_id=self.db_id)
@@ -712,75 +756,82 @@ class QueryReviewTestCase(TestCase):
         
         return ret
     
-    def _generator(self, verbose=True):
-        schema = DatabaseManager().get_db_schema() # type: ignore
-        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=None,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )        
-        outputs = []
-        ret = Munch()
-        ret.test_fixtures = Munch()
-        task_prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
-            f"{self.sql}"
-            f"for natural language question \"{self.nl}\" under the database schema\n"
-            f"{schema_string}"
-        )
-        role_play_session = RolePlaying(
-            assistant_role_name="SQL Developer",
-            assistant_agent_kwargs=dict(model=self.GPT4o),
-            user_role_name="Rubber Duck Debugging Assistant",
-            user_agent_kwargs=dict(model=self.GPT4o),
-            task_prompt=task_prompt,
-            with_task_specify=False,
-            #   task_specify_agent_kwargs=dict(model=model),
-        )
+    def _load_cached_test_cases(self):
         
-        n = 0
-        chat_turn_limit = 10
-        input_msg = role_play_session.init_chat()
-        turns = []
-        # Turn-based simulation
-        while n < chat_turn_limit:
-            n += 1
-            assistant_response, user_response = role_play_session.step(input_msg)
-            if assistant_response.terminated:
-                print(
-                    Fore.GREEN
-                    + (
-                        "AI Assistant terminated. Reason: "
-                        f"{assistant_response.info['termination_reasons']}."
-                    )
-                )
-                break
-            if user_response.terminated:
-                print(
-                    Fore.GREEN
-                    + (
-                        "AI User terminated. "
-                        f"Reason: {user_response.info['termination_reasons']}."
-                    )
-                )
-                break
-
-            # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
-            # print_text_animated(
-            #     Fore.GREEN + "AI Assistant:\\n\\n"
-            #     f"{assistant_response.msg.content}\\n"
-            # )
+        return None
+    
+    def _generator(self, verbose=True):
+        if self.use_cache:
+            outputs = self._load_cached_test_cases()
+        else:
+            schema = DatabaseManager().get_db_schema() # type: ignore
+            # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+            schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+            schema_string = DatabaseManager().get_database_schema_string(
+                tentative_schema=schema,
+                schema_with_examples=None,
+                schema_with_descriptions=schema_with_descriptions,
+                include_value_description=True
+            )        
+            outputs = []
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            task_prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
+                f"{self.sql}"
+                f"for natural language question \"{self.nl}\" under the database schema\n"
+                f"{schema_string}"
+            )
+            role_play_session = RolePlaying(
+                assistant_role_name="SQL Developer",
+                assistant_agent_kwargs=dict(model=self.GPT4o),
+                user_role_name="Rubber Duck Debugging Assistant",
+                user_agent_kwargs=dict(model=self.GPT4o),
+                task_prompt=task_prompt,
+                with_task_specify=False,
+                #   task_specify_agent_kwargs=dict(model=model),
+            )
             
-            parsed_response = json.loads(assistant_response.msg.content.strip())
-            if "CAMEL_TASK_DONE" in user_response.msg.content: break
-            turns.append(parsed_response)
-            input_msg = assistant_response.msg
-      
+            n = 0
+            chat_turn_limit = 10
+            input_msg = role_play_session.init_chat()
+            turns = []
+            # Turn-based simulation
+            while n < chat_turn_limit:
+                n += 1
+                assistant_response, user_response = role_play_session.step(input_msg)
+                if assistant_response.terminated:
+                    print(
+                        Fore.GREEN
+                        + (
+                            "AI Assistant terminated. Reason: "
+                            f"{assistant_response.info['termination_reasons']}."
+                        )
+                    )
+                    break
+                if user_response.terminated:
+                    print(
+                        Fore.GREEN
+                        + (
+                            "AI User terminated. "
+                            f"Reason: {user_response.info['termination_reasons']}."
+                        )
+                    )
+                    break
 
-        ret.test_fixtures.turns = turns
-        outputs.append(self._form_instance(len(outputs), ret))
+                # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
+                # print_text_animated(
+                #     Fore.GREEN + "AI Assistant:\\n\\n"
+                #     f"{assistant_response.msg.content}\\n"
+                # )
+                
+                parsed_response = json.loads(assistant_response.msg.content.strip())
+                if "CAMEL_TASK_DONE" in user_response.msg.content: break
+                turns.append(parsed_response)
+                input_msg = assistant_response.msg
+        
+
+            ret.test_fixtures.turns = turns
+            outputs.append(self._form_instance(len(outputs), ret))
         
         return outputs
 # Done

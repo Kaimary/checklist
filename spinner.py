@@ -1,4 +1,3 @@
-"""A simple spinner module"""
 import itertools
 import sys
 import threading
@@ -14,19 +13,14 @@ class Spinner:
         delay: float = 0.1,
         plain_output: bool = False,
     ) -> None:
-        """Initialize the spinner class
-
-        Args:
-            message (str): The message to display.
-            delay (float): The delay between each spinner update.
-            plain_output (bool): Whether to display the spinner or not.
-        """
+        """Initialize the spinner class"""
+        self._message = message
+        self.delay = delay
         self.plain_output = plain_output
         self.spinner = itertools.cycle(["-", "/", "|", "\\"])
-        self.delay = delay
-        self.message = message
         self.running = False
         self.spinner_thread = None
+        self.lock = threading.Lock()
 
     def spin(self) -> None:
         """Spin the spinner"""
@@ -38,9 +32,16 @@ class Spinner:
             time.sleep(self.delay)
 
     def print_message(self):
-        sys.stdout.write(f"\r{' ' * (len(self.message) + 2)}\r")
-        sys.stdout.write(f"{next(self.spinner)} {self.message}\r")
+        with self.lock:
+            msg = self._message
+        sys.stdout.write(f"\r{' ' * (len(msg) + 2)}\r")
+        sys.stdout.write(f"{next(self.spinner)} {msg}\r")
         sys.stdout.flush()
+
+    def set_message(self, message: str):
+        """Update the spinner message"""
+        with self.lock:
+            self._message = message
 
     def start(self):
         self.running = True
@@ -51,7 +52,9 @@ class Spinner:
         self.running = False
         if self.spinner_thread is not None:
             self.spinner_thread.join()
-        sys.stdout.write(f"\r{' ' * (len(self.message) + 2)}\r")
+        with self.lock:
+            msg = self._message
+        sys.stdout.write(f"\r{' ' * (len(msg) + 2)}\r")
         sys.stdout.flush()
 
     def __enter__(self):
@@ -60,11 +63,5 @@ class Spinner:
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
-        """Stop the spinner
-
-        Args:
-            exc_type (Exception): The exception type.
-            exc_value (Exception): The exception value.
-            exc_traceback (Exception): The exception traceback.
-        """
+        """Stop the spinner"""
         self.stop()

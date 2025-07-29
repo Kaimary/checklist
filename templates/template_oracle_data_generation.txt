@@ -31,18 +31,7 @@ Please respond with a JSON object structured as follows:
     "resulting_data": {{
         "table.column": "value",
         ....
-    }}
-}}
-Note that if no resulting data, please respond with a JSON object structured as follows:
-{{
-    "chain_of_thought_reasoning": "Your thought process on how you think.",
-    "database_instances": {{
-        "table1" : [["a data row of table1"], ...]
-        "table2": [["a data row of table2"], ...]
-        ...
-    }}
-    "resulting_data": {{
-            "unknown": ""
+        // If no data, return: "unknown": ""
     }}
 }}
 

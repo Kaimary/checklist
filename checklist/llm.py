@@ -108,6 +108,7 @@ class LLM:
         for attempt in range(max_attempts):
             try:
                 prompt_text = prompt.invoke(request_kwargs).messages[0].content
+                # print(f"prompt: \n\n{prompt_text}\n\n")
                 raw_output = self.llm_chain.invoke(prompt_text)
                 output = parser.invoke(raw_output)
                 logging.info(f"`{self.llm_chain.model_name}` model response: \"{raw_output.content}\"\n"
