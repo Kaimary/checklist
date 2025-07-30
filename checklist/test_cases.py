@@ -295,9 +295,16 @@ class NLRelaxTestCase(TestCase):
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
     
-    def _validate_test_fixture(self, ret):
+    def _validate_test_fixture(self, response):
+        # def __check_response_history_compatible(response, history):
+        #     if any(h.nl_mutant == response["nl_mutant"] or h.sql_mutant == response["sql_mutant"] for h in history): return False
+        #     return True
+        
         # Check if the mutanted SQL is valid
-        return validate_sql_query(self.db_path, ret.test_fixtures.sql_mutant)["STATUS"] == "OK"
+        if validate_sql_query(self.db_path, response["sql_mutant"])["STATUS"] != "OK": return False
+        ## Check if duplicate response generated
+        # if not __check_response_history_compatible(response, history): return False
+        return True
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -345,41 +352,41 @@ class NLRelaxTestCase(TestCase):
                 f"nl mutation: {h.nl_mutant}\n\n"
                 f"sql mutation: {h.sql_mutant}\n\n"
                 for i, h in enumerate(history)
+            )   
+        def __error_to_string(invalids):
+            return "\n".join(
+                f"sql mutation: {sql}\n\n"
+                for sql in invalids
             )
         
-        prompt = get_prompt(template_name="nl_relaxing_generation")
-        prompt2 = get_prompt(template_name="nl_relaxing_generation_with_history")
         parser = get_parser(parser_name="nl_relaxing_generation")
         history, outputs = [], []
+        invalids = set()
         spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
         with spinner:
             while(len(outputs) < self.num):
                 ret = Munch()
                 ret.test_fixtures = Munch()
-                if history:
-                    response = self.GPT4o(prompt2, parser, 
-                        request_kwargs={
-                            "HINT": self.hint,
-                            "QUESTION": self.nl,
-                            "QUERY": self.sql,
-                            "PREVIOUS": __history_to_string(history)
-                        }
-                    )
-                else:
-                    response = self.GPT4o(prompt, parser, 
-                        request_kwargs={
-                            "HINT": self.hint, 
-                            "QUESTION": self.nl, 
-                            "QUERY": self.sql
-                        }
-                    )
+                prompt = get_prompt(
+                    template_name="nl_relaxing_generation", 
+                    invalid_queries_string=__error_to_string(invalids) if invalids else None,
+                    history_string=__history_to_string(history) if history else None
+                )
+                response = self.GPT4o(prompt, parser, 
+                    request_kwargs={
+                        "HINT": self.hint,
+                        "QUESTION": self.nl,
+                        "QUERY": self.sql
+                    }
+                )
+                if not self._validate_test_fixture(response):
+                    invalids.add(response["sql_mutant"])
+                    if verbose: print(f"Generated test fixture validation failed! Retry...")
+                    continue
                 ret.type = response["type"]
                 ret.desc = response["description"]
                 ret.test_fixtures.nl_mutant = response["nl_mutant"]
-                ret.test_fixtures.sql_mutant = response["sql_mutant"]
-                if not self._validate_test_fixture(ret): 
-                    if verbose: print(f"Generated test fixture validation failed! Retry...")
-                    continue
+                ret.test_fixtures.sql_mutant = response["sql_mutant"] 
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test instances ...")
@@ -409,9 +416,9 @@ class NLStrengthenTestCase(TestCase):
         return passed, ret.test_fixtures, ret.results
     
     
-    def _validate_test_fixture(self, ret):
+    def _validate_test_fixture(self, response):
         # Check if the mutanted SQL is valid
-        return validate_sql_query(self.db_path, ret.test_fixtures.sql_mutant)["STATUS"] == "OK"
+        return validate_sql_query(self.db_path, response["sql_mutant"])["STATUS"] == "OK"
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -461,37 +468,38 @@ class NLStrengthenTestCase(TestCase):
                 for i, h in enumerate(history)
             )
 
-        prompt = get_prompt(template_name="nl_strengthening_generation")
-        prompt2 = get_prompt(template_name="nl_strengthening_generation_with_history")
+        def __error_to_string(invalids):
+            return "\n".join(
+                f"sql mutation: {sql}\n\n"
+                for sql in invalids
+            )
+        
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
+        invalids = set()
         while(len(outputs) < self.num):
             ret = Munch()
             ret.test_fixtures = Munch()
-            if history:
-                response = self.GPT4o(prompt2, parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl, 
-                        "QUERY": self.sql,
-                        "PREVIOUS": __history_to_string(history)
-                    }
-                )
-            else:
-                response = self.GPT4o(prompt, parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl, 
-                        "QUERY": self.sql
-                    }
-                )
+            prompt = get_prompt(
+                template_name="nl_strengthening_generation", 
+                invalid_queries_string=__error_to_string(invalids) if invalids else None,
+                history_string=__history_to_string(history) if history else None
+            )
+            response = self.GPT4o(prompt, parser, 
+                request_kwargs={
+                    "HINT": self.hint,
+                    "QUESTION": self.nl,
+                    "QUERY": self.sql
+                }
+            )
+            if not self._validate_test_fixture(response):
+                invalids.add(response["sql_mutant"])
+                if verbose: print(f"Generated test fixture validation failed! Retry...")
+                continue
             ret.type = response["type"]
             ret.desc = response["description"]
             ret.test_fixtures.nl_mutant = response["nl_mutant"]
-            ret.test_fixtures.sql_mutant = response["sql_mutant"]
-            if not self._validate_test_fixture(ret): 
-                if verbose: print(f"Generated test fixture validation failed! Retry...")
-                continue
+            ret.test_fixtures.sql_mutant = response["sql_mutant"] 
             history.append(ret.test_fixtures)
             outputs.append(self._form_instance(len(outputs), ret))
         return outputs

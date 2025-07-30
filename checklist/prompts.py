@@ -20,7 +20,7 @@ def load_template(template_name: str) -> str:
     Returns:
         str: The content of the template.
     """
-    file_name = f"template_{template_name}.txt"
+    file_name = f"template_{template_name}.j2"
     template_path = os.path.join(TEMPLATES_ROOT_PATH, file_name)
     
     try:
@@ -60,13 +60,10 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "candidate_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "nl2sql_translation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "revision": {"input_variables": ["SQL", "QUESTION", "MISSING_ENTITIES", "EVIDENCE", "QUERY_RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "oracle_data_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "oracle_data_generation_with_history": {"input_variables": ["HINT", "QUESTION", "PREVIOUS"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
+        "oracle_data_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "HISTORY": kwargs.get("history_string", "")}},
         "oracle_result_checking": {"input_variables": ["HINT", "QUESTION", "INSTANCES", "RESULT1", "RESULT2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "nl_relaxing_generation": {"input_variables": ["HINT", "QUESTION", "SQL"]},
-        "nl_relaxing_generation_with_history": {"input_variables": ["HINT", "QUESTION", "SQL", "PREVIOUS"]},
-        "nl_strengthening_generation": {"input_variables": ["HINT", "QUESTION", "SQL"]},
-        "nl_strengthening_generation_with_history": {"input_variables": ["HINT", "QUESTION", "SQL", "PREVIOUS"]},
+        "nl_relaxing_generation": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"HISTORY": kwargs.get("history_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
+        "nl_strengthening_generation": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"HISTORY": kwargs.get("history_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
         "nl_mutation_generation": {"input_variables": ["HINT", "QUESTION"]},
     }
 
@@ -82,6 +79,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
     human_message_prompt_template = HumanMessagePromptTemplate(
         prompt=PromptTemplate(
             template=template_content,
+            template_format="jinja2",
             input_variables=input_variables,
             partial_variables=partial_variables
         )
@@ -89,7 +87,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
 
     return human_message_prompt_template
 
-def get_prompt(template_name: str, schema_string: str = None) -> ChatPromptTemplate:
+def get_prompt(template_name: str, **kwargs) -> ChatPromptTemplate:
     """
     Creates a ChatPromptTemplate based on the provided template name and schema string.
 
@@ -100,7 +98,7 @@ def get_prompt(template_name: str, schema_string: str = None) -> ChatPromptTempl
     Returns:
         ChatPromptTemplate: The combined prompt template.
     """
-    human_message_prompt_template = _get_prompt_template(template_name=template_name, schema_string=schema_string)
+    human_message_prompt_template = _get_prompt_template(template_name=template_name, **kwargs)
     
     combined_prompt_template = ChatPromptTemplate.from_messages(
         [human_message_prompt_template]

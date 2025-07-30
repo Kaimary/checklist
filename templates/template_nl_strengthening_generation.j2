@@ -7,22 +7,38 @@ By strengthen, we mean:
 
 ###
 Question:
-{QUESTION} 
+{{QUESTION}}
 
 HINT:
-{HINT}
+{{HINT}}
 
 SQL:
-{QUERY}
+{{QUERY}}
 
-Please respond with a JSON object structured as follows.
+Please respond with a JSON object structured as follows:
 
-{{
+{% raw %}
+{
     "chain_of_thought_reasoning": "Your thought process on how you think.",
     "type": "'add a constraint' or 'strengthen a constraint'",
-    "description": "Describe the contraint exists both in the NL and the SQL",
+    "description": "Describe the constraint exists both in the NL and the SQL",
     "nl_mutant": "the NL transformed from original NL",
     "sql_mutant": "the query transformed from original SQL"
-}}
+}
+{% endraw %}
+
+{% if HISTORY %}
+Below are previously generated metamorphic relations:
+###
+{{HISTORY}}
+DO NOT repeat any of them! Please generate diverse metamorphic relations wherever possible.
+{% endif %}
+
+{% if INVALIDS %}
+And here are some invalid SQL mutants generated before:
+###
+{{INVALIDS}}
+DO NOT repeat generate those invalid queries as well.
+{% endif %}
 
 Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.
