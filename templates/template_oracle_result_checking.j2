@@ -6,36 +6,37 @@ Your task is to:
 
 Database Schema
 ###
-{DATABASE_SCHEMA}
+{{DATABASE_SCHEMA}}
 
 This schema offers an in-depth description of the database's architecture, detailing tables, columns, primary keys, foreign keys, and any pertinent information regarding relationships or constraints. Special attention should be given to the examples listed beside each column, as they directly hint at which columns are relevant to our query.
 
 
 ###
 Question: 
-{QUESTION}
+{{QUESTION}}
 
 Hint:
-{HINT}
+{{HINT}}
 
 Database Instances:
-{INSTANCES}
+{{INSTANCES}}
 
 Two Possible Results:
-{RESULT1}
+{{RESULT1}}
 
-{RESULT2}
+{{RESULT2}}
 
 
 Please respond with a JSON object structured as follows:
-
-{{
-    "resulting_data": {{
+{% raw %}
+{
+    "resulting_data": {
         "table.column": "value",
         ....
         // If no data, return: "unknown": ""
-    }}
-}}
+    }
+}
+{% endraw %}
 
 Note that if either result is correct, respond with it directly; Otherwise, provide the result you believe is correct.
 Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

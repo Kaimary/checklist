@@ -246,8 +246,6 @@ class OracleResultTestCase(TestCase):
                 for i, h in enumerate(history)
             )
 
-        prompt = get_prompt(template_name="oracle_data_generation", schema_string=self.schema_string)
-        prompt2 = get_prompt(template_name="oracle_data_generation_with_history", schema_string=self.schema_string)
         parser = get_parser(parser_name="oracle_data_generation")
         history, outputs = [], []
         
@@ -256,11 +254,16 @@ class OracleResultTestCase(TestCase):
             while(len(outputs) < self.num):
                 ret = Munch()
                 ret.test_fixtures = Munch()
-                if history:
-                    response = self.GPT4o(prompt2, parser, \
-                        request_kwargs={"HINT": self.hint, "QUESTION": self.nl, "PREVIOUS": __history_to_string(history)})
-                else:
-                    response = self.GPT4o(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+                prompt = get_prompt(
+                    template_name="oracle_data_generation", 
+                    schema_string=self.schema_string,
+                    history_string=__history_to_string(history) if history else None
+                )
+                response = self.GPT4o(prompt, parser, request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl
+                    }
+                )
                 if not self._validate_test_fixture(response, history): 
                     if verbose: print(f"Generated test fixture validation failed! Retry...")
                     continue
@@ -606,7 +609,15 @@ class SelfConsistencyTestCase(TestCase):
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "query_consistency", db_id, hashing_nl_sql(nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
-        self.dm = DatabaseManager(db_id=self.db_id)
+        schema = DatabaseManager(db_id=self.db_id).get_db_schema() # type: ignore
+        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=schema_with_examples,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
         self.instances = self._generator()
         
     def set_settings(self, **kwargs):
@@ -626,9 +637,9 @@ class SelfConsistencyTestCase(TestCase):
         return passed, ret.test_fixtures, ret.results
     
     
-    def _validate_test_fixture(self, ret):
+    def _validate_test_fixture(self, response):
         # Check if the mutanted SQL is valid
-        return validate_sql_query(self.db_path, ret.test_fixtures.predict_sql)["STATUS"] == "OK"
+        return validate_sql_query(self.db_path, response)["STATUS"] == "OK"
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -661,52 +672,33 @@ class SelfConsistencyTestCase(TestCase):
                 f"nl mutation: {h.nl_mutant}\n\n"
                 for i, h in enumerate(history)
             )
-
-        prompt = get_prompt(template_name="nl_mutation_generation")
-        prompt3 = get_prompt(template_name="nl_mutation_generation_with_history")
-        parser = get_parser(parser_name="nl_mutation_generation")
         
-        schema = DatabaseManager().get_db_schema() # type: ignore
-        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=schema_with_examples,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
-        prompt2 = get_prompt(template_name="nl2sql_translation", schema_string=schema_string)
+        parser = get_parser(parser_name="nl_mutation_generation")
+        prompt2 = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser2 = get_parser(parser_name="nl2sql_translation")
         history, outputs = [], []
         while(len(outputs) < self.num):
             ret = Munch()
             ret.test_fixtures = Munch()
-            if history:
-                nl_mutant = self.GPT4o(prompt3, parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl,
-                        "PREVIOUS": __history_to_string(history)
-                    }
-                )["NL"]
-            else:
-                nl_mutant = self.GPT4o(prompt, parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl
-                    }
-                )["NL"]
-            pred = self.model(prompt2, parser2, 
-                request_kwargs={
-                    "HINT": self.hint, 
-                    "QUESTION": nl_mutant
+            prompt = get_prompt(
+                template_name="nl_mutation_generation",
+                history_string=__history_to_string(history) if history else None
+            )
+            nl_mutant = self.GPT4o(prompt, parser, request_kwargs={
+                "HINT": self.hint, 
+                "QUESTION": self.nl
+                }
+            )["NL"]
+            pred = self.model(prompt2, parser2, request_kwargs={
+                "HINT": self.hint,
+                "QUESTION": nl_mutant
                 }
             )["SQL"]
-            ret.test_fixtures.nl_mutant = nl_mutant
-            ret.test_fixtures.predict_sql = pred
-            if not self._validate_test_fixture(ret): 
+            if not self._validate_test_fixture(pred): 
                 if verbose: print(f"Generated test fixture validation failed! Retry...")
                 continue
+            ret.test_fixtures.nl_mutant = nl_mutant
+            ret.test_fixtures.predict_sql = pred
             history.append(ret.test_fixtures)
             outputs.append(self._form_instance(len(outputs), ret))
         return outputs

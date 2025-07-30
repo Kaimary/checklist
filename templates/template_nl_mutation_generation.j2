@@ -5,15 +5,16 @@ Before that, your task is to read and understand the natural language (NL) quest
 
 ###
 Question:
-{QUESTION} 
+{{QUESTION}}
 
-HINT:
-{HINT}
+Hint:
+{{HINT}}
 
+{% if HISTORY %}
 Below are previously generated NL mutations:
 ###
-{PREVIOUS}
-
+{{HISTORY}}
 DO NOT repeat any of them! Please generate diverse NL mutations wherever possible.
+{% endif %}
 
 Please respond with an NL between ```nl and ``` with same semantics.
