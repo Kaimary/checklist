@@ -11,3 +11,5 @@ venv/
 data/
 test_cases/
 .env
+run_test.py
+camel_test.py
