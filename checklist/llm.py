@@ -122,6 +122,7 @@ class LLM:
                 if attempt == max_attempts - 1:
                     raise e
             except Exception as e:
+                print(f"Attempt {attempt + 1} failed with error: {e}")
                 if attempt < max_attempts - 1:
                     sleep_time = (backoff_base ** attempt) + random.uniform(0, jitter_max)
                     time.sleep(sleep_time)
