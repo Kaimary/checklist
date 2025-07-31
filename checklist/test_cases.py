@@ -16,7 +16,7 @@ from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
-from checklist.database_utils.db_info import load_schema_with_examples, load_schema_with_simulated_examples
+from checklist.database_utils.db_info import load_schema_with_examples
 from checklist.database_utils.db_values.preprocess import _get_unique_values
 from spinner import Spinner
 
@@ -365,9 +365,10 @@ class NLRelaxTestCase(TestCase):
         parser = get_parser(parser_name="nl_relaxing_generation")
         history, outputs = [], []
         invalids = set()
+        retry = 0
         spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
         with spinner:
-            while(len(outputs) < self.num):
+            while len(outputs) < self.num and retry < self.num * 2:
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 prompt = get_prompt(
@@ -384,7 +385,8 @@ class NLRelaxTestCase(TestCase):
                 )
                 if not self._validate_test_fixture(response):
                     invalids.add(response["sql_mutant"])
-                    if verbose: print(f"Generated test fixture validation failed! Retry...")
+                    retry += 1
+                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
                     continue
                 ret.type = response["type"]
                 ret.desc = response["description"]
@@ -480,31 +482,36 @@ class NLStrengthenTestCase(TestCase):
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
         invalids = set()
-        while(len(outputs) < self.num):
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            prompt = get_prompt(
-                template_name="nl_strengthening_generation", 
-                invalid_queries_string=__error_to_string(invalids) if invalids else None,
-                history_string=__history_to_string(history) if history else None
-            )
-            response = self.GPT4o(prompt, parser, 
-                request_kwargs={
-                    "HINT": self.hint,
-                    "QUESTION": self.nl,
-                    "QUERY": self.sql
-                }
-            )
-            if not self._validate_test_fixture(response):
-                invalids.add(response["sql_mutant"])
-                if verbose: print(f"Generated test fixture validation failed! Retry...")
-                continue
-            ret.type = response["type"]
-            ret.desc = response["description"]
-            ret.test_fixtures.nl_mutant = response["nl_mutant"]
-            ret.test_fixtures.sql_mutant = response["sql_mutant"] 
-            history.append(ret.test_fixtures)
-            outputs.append(self._form_instance(len(outputs), ret))
+        retry = 0
+        spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
+        with spinner:
+            while len(outputs) < self.num and retry < self.num * 2:
+                ret = Munch()
+                ret.test_fixtures = Munch()
+                prompt = get_prompt(
+                    template_name="nl_strengthening_generation", 
+                    invalid_queries_string=__error_to_string(invalids) if invalids else None,
+                    history_string=__history_to_string(history) if history else None
+                )
+                response = self.GPT4o(prompt, parser, 
+                    request_kwargs={
+                        "HINT": self.hint,
+                        "QUESTION": self.nl,
+                        "QUERY": self.sql
+                    }
+                )
+                if not self._validate_test_fixture(response):
+                    invalids.add(response["sql_mutant"])
+                    retry += 1
+                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    continue
+                ret.type = response["type"]
+                ret.desc = response["description"]
+                ret.test_fixtures.nl_mutant = response["nl_mutant"]
+                ret.test_fixtures.sql_mutant = response["sql_mutant"] 
+                history.append(ret.test_fixtures)
+                outputs.append(self._form_instance(len(outputs), ret))
+                spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
 
 class CrossModelTestCase(TestCase):
@@ -512,10 +519,18 @@ class CrossModelTestCase(TestCase):
         super().__init__("Majority Voting Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.active_llm_num = active_llm_num
         self.llm_pool = self._create_llm_pool()
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "majority_vote", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "majority_vote", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.dm = DatabaseManager(db_id=self.db_id)
+        schema = DatabaseManager(db_id=self.db_id).get_db_schema() # type: ignore
+        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=schema_with_examples,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
         self.instances = self._generator()
 
     def set_settings(self, **kwargs):
@@ -540,8 +555,8 @@ class CrossModelTestCase(TestCase):
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
     
-    def _validate_test_fixture(self, ret):
-        # Seems nothing need to be checked at this moment
+    def _validate_test_fixture(self, candidates):
+        if len(candidates) < self.active_llm_num: return False
         return True
     
     def write_test_fixture_file(self, output_dir, **kwargs):
@@ -574,42 +589,46 @@ class CrossModelTestCase(TestCase):
         return ret
     
     def _generator(self, verbose=True):
-        schema = DatabaseManager().get_db_schema() # type: ignore
-        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=schema_with_examples,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
-        prompt = get_prompt(template_name="nl2sql_translation", schema_string=schema_string)
+        prompt = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser = get_parser(parser_name="nl2sql_translation")
         outputs = []
-        while(len(outputs) < self.num):
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            ret.test_fixtures.candidates = [model(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})["SQL"] \
-                for model in random.sample(self.llm_pool, self.active_llm_num)
-            ]
-            if not self._validate_test_fixture(ret): 
-                if verbose: print(f"Generated test fixture validation failed! Retry...")
-                continue
-            outputs.append(self._form_instance(len(outputs), ret))
+        retry = 0
+        spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
+        with spinner:
+            while len(outputs) < self.num and retry < self.num * 2:
+                candidates = []
+                ret = Munch()
+                ret.test_fixtures = Munch()
+                for model in random.sample(self.llm_pool, self.active_llm_num):
+                    one_retry = 0
+                    while True and one_retry < 3:
+                        candidate = model(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})["SQL"]
+                        if validate_sql_query(self.db_path, candidate)["STATUS"] == "OK": break
+                        one_retry += 1
+                    if one_retry < 3: candidates.append(candidate)
+                if not self._validate_test_fixture(candidates):
+                    retry += 1
+                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    continue
+                ret.test_fixtures.candidates = candidates
+                outputs.append(self._form_instance(len(outputs), ret))
+                spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
 
 class SelfConsistencyTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, model=None, num=10):
         super().__init__("Query Consistency Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         if model is None:
-            raise(Exception('No model provided. Please specify your NL2SQL model first'))
+            raise(Exception('No model provided. Please specify your NL2SQL model first ...'))
         self.model = model
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "query_consistency", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(
+            TEST_INSTANCE_ROOT_PATH, 
+            "differential", "query_consistency", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
-        schema = DatabaseManager(db_id=self.db_id).get_db_schema() # type: ignore
+        schema = DatabaseManager(db_id=self.db_id).get_db_schema()
         schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(
@@ -636,10 +655,10 @@ class SelfConsistencyTestCase(TestCase):
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
     
-    
-    def _validate_test_fixture(self, response):
-        # Check if the mutanted SQL is valid
-        return validate_sql_query(self.db_path, response)["STATUS"] == "OK"
+    def _validate_test_fixture(self, nl_mutant, pred, history):
+        if any(h.nl_mutant == nl_mutant for h in history): return False
+        if validate_sql_query(self.db_path, pred)["STATUS"] != "OK": return False
+        return True
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -677,42 +696,58 @@ class SelfConsistencyTestCase(TestCase):
         prompt2 = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser2 = get_parser(parser_name="nl2sql_translation")
         history, outputs = [], []
-        while(len(outputs) < self.num):
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            prompt = get_prompt(
-                template_name="nl_mutation_generation",
-                history_string=__history_to_string(history) if history else None
-            )
-            nl_mutant = self.GPT4o(prompt, parser, request_kwargs={
-                "HINT": self.hint, 
-                "QUESTION": self.nl
-                }
-            )["NL"]
-            pred = self.model(prompt2, parser2, request_kwargs={
-                "HINT": self.hint,
-                "QUESTION": nl_mutant
-                }
-            )["SQL"]
-            if not self._validate_test_fixture(pred): 
-                if verbose: print(f"Generated test fixture validation failed! Retry...")
-                continue
-            ret.test_fixtures.nl_mutant = nl_mutant
-            ret.test_fixtures.predict_sql = pred
-            history.append(ret.test_fixtures)
-            outputs.append(self._form_instance(len(outputs), ret))
+        retry = 0
+        spinner = Spinner(f"Generating Test Case `{self.name}` test instances ...")
+        with spinner:
+            while len(outputs) < self.num and retry < self.num * 2:
+                ret = Munch()
+                ret.test_fixtures = Munch()
+                prompt = get_prompt(
+                    template_name="nl_mutation_generation",
+                    history_string=__history_to_string(history) if history else None
+                )
+                nl_mutant = self.GPT4o(prompt, parser, request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl
+                    }
+                )["NL"]
+                if any(nl_mutant == h.nl_mutant for h in history):
+                    retry += 1
+                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    continue
+                # TODO change to be a unified interface that should be implemented for a given NL2SQL model
+                pred = self.model(prompt2, parser2, request_kwargs={
+                    "HINT": self.hint,
+                    "QUESTION": nl_mutant
+                    }
+                )["SQL"]
+                if not self._validate_test_fixture(nl_mutant, pred, history):
+                    retry += 1
+                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    continue
+                ret.test_fixtures.nl_mutant = nl_mutant
+                ret.test_fixtures.predict_sql = pred
+                history.append(ret.test_fixtures)
+                outputs.append(self._form_instance(len(outputs), ret))
+                spinner.set_message(f"Generated {len(outputs)} test instances ...")
         return outputs
 
 class QueryReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Query Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-
-        
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", db_id, hashing_nl_sql())
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.dm = DatabaseManager(db_id=self.db_id)
+        schema = DatabaseManager(db_id=self.db_id).get_db_schema() # type: ignore
+        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=None,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
         self.instances = self._generator()
         
     def set_settings(self, **kwargs):
@@ -757,29 +792,19 @@ class QueryReviewTestCase(TestCase):
         return ret
     
     def _load_cached_test_cases(self):
-        
         return None
     
     def _generator(self, verbose=True):
         if self.use_cache:
             outputs = self._load_cached_test_cases()
-        else:
-            schema = DatabaseManager().get_db_schema() # type: ignore
-            # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-            schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-            schema_string = DatabaseManager().get_database_schema_string(
-                tentative_schema=schema,
-                schema_with_examples=None,
-                schema_with_descriptions=schema_with_descriptions,
-                include_value_description=True
-            )        
+        else:   
             outputs = []
             ret = Munch()
             ret.test_fixtures = Munch()
             task_prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
                 f"{self.sql}"
                 f"for natural language question \"{self.nl}\" under the database schema\n"
-                f"{schema_string}"
+                f"{self.schema_string}"
             )
             role_play_session = RolePlaying(
                 assistant_role_name="SQL Developer",
@@ -832,19 +857,25 @@ class QueryReviewTestCase(TestCase):
 
             ret.test_fixtures.turns = turns
             outputs.append(self._form_instance(len(outputs), ret))
-        
+
         return outputs
 
 class NLReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Natural Language Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-
-        
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "nl_review", db_id, hashing_nl_sql(nl, sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "nl_review", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.dm = DatabaseManager(db_id=self.db_id)
+        schema = DatabaseManager(db_id=self.db_id).get_db_schema() # type: ignore
+        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=None,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
         self.instances = self._generator()
         
     def set_settings(self, **kwargs):
@@ -871,7 +902,6 @@ class NLReviewTestCase(TestCase):
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         
-        
     def _form_instance(self, idx, ret):
         """
         Form each single test case, and save related test fixture for serialization. 
@@ -889,16 +919,7 @@ class NLReviewTestCase(TestCase):
         
         return ret
     
-    def _generator(self, verbose=True):
-        schema = DatabaseManager().get_db_schema() # type: ignore
-        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=None,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )        
+    def _generator(self, verbose=True):    
         outputs = []
         
         ret = Munch()
@@ -909,7 +930,7 @@ class NLReviewTestCase(TestCase):
             f"against the SQL query\n"
             f"{self.sql}"
             "under the database schema:\n"
-            f"{schema_string}"
+            f"{self.schema_string}"
         )
         role_play_session = RolePlaying(
             assistant_role_name="SQL Developer",

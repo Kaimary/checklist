@@ -64,7 +64,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "oracle_result_checking": {"input_variables": ["HINT", "QUESTION", "INSTANCES", "RESULT1", "RESULT2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "nl_relaxing_generation": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"HISTORY": kwargs.get("history_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
         "nl_strengthening_generation": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"HISTORY": kwargs.get("history_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
-        "nl_mutation_generation": {"input_variables": ["HINT", "QUESTION"]},
+        "nl_mutation_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"HISTORY": kwargs.get("history_string", "")}},
     }
 
     if template_name not in template_configs:
