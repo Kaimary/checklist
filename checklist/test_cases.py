@@ -1,24 +1,27 @@
-import random
-import os, re, json, hashlib
+import os, re, json, hashlib, random
 import numpy as np
 from pathlib import Path
 from munch import Munch
 from colorama import Fore
 from dotenv import load_dotenv
 from abc import ABC, abstractmethod
-from camel.societies import RolePlaying
 from camel.utils import print_text_animated
+from camel.societies import RolePlaying
+from camel.models import ModelFactory
+from camel.configs import ChatGPTConfig
+from camel.types import ModelPlatformType, ModelType
 
-from checklist.database_utils.db_opt import duplicate_sqlite_database, insert_rows_into_table
-from checklist.database_utils.execution import execute_sql, validate_sql_query
+from checklist.spinner import Spinner
 from checklist.llm import CONFIGS, LLM
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.database_manager import DatabaseManager
+from checklist.database_utils.db_opt import duplicate_sqlite_database, insert_rows_into_table
+from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
 from checklist.database_utils.db_info import load_schema_with_examples
 from checklist.database_utils.db_values.preprocess import _get_unique_values
-from spinner import Spinner
+
 
 load_dotenv(override=True)
 TEST_INSTANCE_ROOT_PATH = Path(os.getenv("TEST_INSTANCE_ROOT_PATH"))
@@ -81,7 +84,6 @@ class TestCase(ABC):
                 results[k].append(v)
                 
         return np.array(passes), fixtures, results
-
 
 class OracleResultTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
@@ -735,7 +737,12 @@ class SelfConsistencyTestCase(TestCase):
 class QueryReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Query Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
-        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        # self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        self.GPT4o = ModelFactory.create(
+            model_platform=ModelPlatformType.AZURE,
+            model_type=ModelType.GPT_4O_MINI,
+            model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
+        )
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
@@ -801,7 +808,7 @@ class QueryReviewTestCase(TestCase):
             outputs = []
             ret = Munch()
             ret.test_fixtures = Munch()
-            task_prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
+            prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
                 f"{self.sql}"
                 f"for natural language question \"{self.nl}\" under the database schema\n"
                 f"{self.schema_string}"
@@ -811,11 +818,10 @@ class QueryReviewTestCase(TestCase):
                 assistant_agent_kwargs=dict(model=self.GPT4o),
                 user_role_name="Rubber Duck Debugging Assistant",
                 user_agent_kwargs=dict(model=self.GPT4o),
-                task_prompt=task_prompt,
+                task_prompt=prompt,
                 with_task_specify=False,
                 #   task_specify_agent_kwargs=dict(model=model),
             )
-            
             n = 0
             chat_turn_limit = 10
             input_msg = role_play_session.init_chat()
@@ -825,29 +831,14 @@ class QueryReviewTestCase(TestCase):
                 n += 1
                 assistant_response, user_response = role_play_session.step(input_msg)
                 if assistant_response.terminated:
-                    print(
-                        Fore.GREEN
-                        + (
-                            "AI Assistant terminated. Reason: "
-                            f"{assistant_response.info['termination_reasons']}."
-                        )
-                    )
+                    print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}.")
                     break
                 if user_response.terminated:
-                    print(
-                        Fore.GREEN
-                        + (
-                            "AI User terminated. "
-                            f"Reason: {user_response.info['termination_reasons']}."
-                        )
-                    )
+                    print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}.")
                     break
 
-                # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
-                # print_text_animated(
-                #     Fore.GREEN + "AI Assistant:\\n\\n"
-                #     f"{assistant_response.msg.content}\\n"
-                # )
+                print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
+                print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n")
                 
                 parsed_response = json.loads(assistant_response.msg.content.strip())
                 if "CAMEL_TASK_DONE" in user_response.msg.content: break
@@ -863,7 +854,13 @@ class QueryReviewTestCase(TestCase):
 class NLReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Natural Language Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
-        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        # self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        self.GPT4o = ModelFactory.create(
+            model_platform=ModelPlatformType.AZURE,
+            model_type=ModelType.GPT_4O_MINI,
+            model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
+        )
+        
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "nl_review", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
@@ -921,11 +918,9 @@ class NLReviewTestCase(TestCase):
     
     def _generator(self, verbose=True):    
         outputs = []
-        
         ret = Munch()
         ret.test_fixtures = Munch()
-        
-        task_prompt = ("Using Rubber Duck Debugging to verify the correctness of the below natural language question phrase by phrase\n"
+        prompt = ("Using Rubber Duck Debugging to verify the correctness of the below natural language question phrase by phrase\n"
             f"{self.nl}"
             f"against the SQL query\n"
             f"{self.sql}"
@@ -937,7 +932,7 @@ class NLReviewTestCase(TestCase):
             assistant_agent_kwargs=dict(model=self.GPT4o),
             user_role_name="Rubber Duck Debugging Assistant",
             user_agent_kwargs=dict(model=self.GPT4o),
-            task_prompt=task_prompt,
+            task_prompt=prompt,
             with_task_specify=False,
             #   task_specify_agent_kwargs=dict(model=model),
         )
@@ -951,29 +946,14 @@ class NLReviewTestCase(TestCase):
             n += 1
             assistant_response, user_response = role_play_session.step(input_msg)
             if assistant_response.terminated:
-                print(
-                    Fore.GREEN
-                    + (
-                        "AI Assistant terminated. Reason: "
-                        f"{assistant_response.info['termination_reasons']}."
-                    )
-                )
+                print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}.")
                 break
             if user_response.terminated:
-                print(
-                    Fore.GREEN
-                    + (
-                        "AI User terminated. "
-                        f"Reason: {user_response.info['termination_reasons']}."
-                    )
-                )
+                print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}.")
                 break
 
-            # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
-            # print_text_animated(
-            #     Fore.GREEN + "AI Assistant:\\n\\n"
-            #     f"{assistant_response.msg.content}\\n"
-            # )
+            print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
+            print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n")
             
             parsed_response = json.loads(assistant_response.msg.content.strip())
             turns.append(parsed_response)
