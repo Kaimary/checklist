@@ -1,4 +1,5 @@
 import itertools
+import shutil
 import sys
 import threading
 import time
@@ -31,10 +32,15 @@ class Spinner:
             self.print_message()
             time.sleep(self.delay)
 
+    def _clear_line(self):
+        sys.stdout.write('\r')
+        sys.stdout.write(' ' * (shutil.get_terminal_size().columns))
+        sys.stdout.write('\r')
+        
     def print_message(self):
         with self.lock:
             msg = self._message
-        sys.stdout.write(f"\r{' ' * (len(msg) + 2)}\r")
+        self._clear_line()
         sys.stdout.write(f"{next(self.spinner)} {msg}\r")
         sys.stdout.flush()
 
@@ -54,7 +60,7 @@ class Spinner:
             self.spinner_thread.join()
         with self.lock:
             msg = self._message
-        sys.stdout.write(f"\r{' ' * (len(msg) + 2)}\r")
+        self._clear_line()
         sys.stdout.flush()
 
     def __enter__(self):

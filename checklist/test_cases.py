@@ -2,7 +2,7 @@ import os, re, json, hashlib, random
 import numpy as np
 from pathlib import Path
 from munch import Munch
-from colorama import Fore
+from colorama import Fore, Style
 from dotenv import load_dotenv
 from abc import ABC, abstractmethod
 from camel.utils import print_text_animated
@@ -37,7 +37,7 @@ def hashing(schema, nl=None, sql=None):
     return hashing_str
 
 class TestCase(ABC):
-    def __init__(self, name, nl, hint, sql, sql_dialect, db_id, db_path, num=-1, use_cache=True):
+    def __init__(self, name, nl, hint, sql, sql_dialect, db_id, db_path, num=-1, criteria=1.0, use_cache=False):
         self.name = name
         self.num = num
         self.nl=nl
@@ -47,11 +47,11 @@ class TestCase(ABC):
         self.db_id=db_id
         self.db_path=db_path
         self.use_cache=use_cache
-        
+        self.criteria = criteria
+
         self.instances = []
         self.test_fn = self._test_fn
-        
-    
+
     @abstractmethod
     def set_settings(self, **kwargs):
         pass
@@ -68,6 +68,9 @@ class TestCase(ABC):
     def _generator(self):
         pass
 
+    def _load_cached_test_cases(self):
+        return None
+    
     def run(self):
         """Run all generated test cases in this unit test
         """
@@ -82,11 +85,13 @@ class TestCase(ABC):
             for k, v in result.items():
                 if k not in results: results[k] = []
                 results[k].append(v)
-                
-        return np.array(passes), fixtures, results
+        # Verify whether the number of passes for the test instances meets the test case criteria
+        detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
+
+        return np.array(passes), fixtures, results, detection_result
 
 class OracleResultTestCase(TestCase):
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10, criteria=1.0):
         super().__init__("Oracle Result Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
 
@@ -106,7 +111,8 @@ class OracleResultTestCase(TestCase):
         self.instances = self._generator()
                 
     def set_settings(self, **kwargs):
-        self.num = kwargs.get("num")
+        self.num = kwargs.get("num", self.num)
+        self.criteria = kwargs.get("criteria", 1.0)
 
     def _compare_query_results(self, preds, raw_golds):
         normalized = {
@@ -267,7 +273,7 @@ class OracleResultTestCase(TestCase):
                     }
                 )
                 if not self._validate_test_fixture(response, history): 
-                    if verbose: print(f"Generated test fixture validation failed! Retry...")
+                    if verbose: spinner.set_message(f"Generated test fixture validation failed! Retry...")
                     continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response["resulting_data"]
@@ -737,7 +743,6 @@ class SelfConsistencyTestCase(TestCase):
 class QueryReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Query Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
-        # self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         self.GPT4o = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
@@ -798,9 +803,6 @@ class QueryReviewTestCase(TestCase):
         
         return ret
     
-    def _load_cached_test_cases(self):
-        return None
-    
     def _generator(self, verbose=True):
         if self.use_cache:
             outputs = self._load_cached_test_cases()
@@ -808,20 +810,39 @@ class QueryReviewTestCase(TestCase):
             outputs = []
             ret = Munch()
             ret.test_fixtures = Munch()
-            prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
-                f"{self.sql}"
-                f"for natural language question \"{self.nl}\" under the database schema\n"
-                f"{self.schema_string}"
-            )
+            prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
+            task_prompt = prompt.invoke({
+                "QUESTION": self.nl,
+                "HINT": self.hint,
+                "SQL": self.sql
+                }
+            ).messages[0].content
+            # prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
+            #     f"{self.sql}"
+            #     f"for natural language question \"{self.nl}\" under the database schema\n"
+            #     f"{self.schema_string}"
+            # )
             role_play_session = RolePlaying(
                 assistant_role_name="SQL Developer",
                 assistant_agent_kwargs=dict(model=self.GPT4o),
                 user_role_name="Rubber Duck Debugging Assistant",
                 user_agent_kwargs=dict(model=self.GPT4o),
-                task_prompt=prompt,
+                task_prompt=task_prompt,
                 with_task_specify=False,
                 #   task_specify_agent_kwargs=dict(model=model),
             )
+
+            # # Print initial system messages
+            # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
+            # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
+            # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
+            # print(
+            #     Fore.CYAN
+            #     + "Specified task prompt:"
+            #     + f"\\n{role_play_session.specified_task_prompt}\\n"
+            #     + Style.RESET_ALL
+            # )
+            # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
             n = 0
             chat_turn_limit = 10
             input_msg = role_play_session.init_chat()
@@ -831,21 +852,20 @@ class QueryReviewTestCase(TestCase):
                 n += 1
                 assistant_response, user_response = role_play_session.step(input_msg)
                 if assistant_response.terminated:
-                    print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}.")
+                    print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
                     break
                 if user_response.terminated:
-                    print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}.")
+                    print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
                     break
 
-                print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
-                print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n")
+                print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+                print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
                 
                 parsed_response = json.loads(assistant_response.msg.content.strip())
                 if "CAMEL_TASK_DONE" in user_response.msg.content: break
                 turns.append(parsed_response)
                 input_msg = assistant_response.msg
         
-
             ret.test_fixtures.turns = turns
             outputs.append(self._form_instance(len(outputs), ret))
 
@@ -854,7 +874,6 @@ class QueryReviewTestCase(TestCase):
 class NLReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
         super().__init__("Step-through Natural Language Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
-        # self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         self.GPT4o = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
@@ -920,19 +939,25 @@ class NLReviewTestCase(TestCase):
         outputs = []
         ret = Munch()
         ret.test_fixtures = Munch()
-        prompt = ("Using Rubber Duck Debugging to verify the correctness of the below natural language question phrase by phrase\n"
-            f"{self.nl}"
-            f"against the SQL query\n"
-            f"{self.sql}"
-            "under the database schema:\n"
-            f"{self.schema_string}"
-        )
+        prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
+        task_prompt = prompt.invoke({
+            "QUESTION": self.nl,
+            "SQL": self.sql
+            }
+        ).messages[0].content
+        # prompt = ("Using Rubber Duck Debugging to verify the correctness of the below natural language question phrase by phrase\n"
+        #     f"{self.nl}"
+        #     f"against the SQL query\n"
+        #     f"{self.sql}"
+        #     "under the database schema:\n"
+        #     f"{self.schema_string}"
+        # )
         role_play_session = RolePlaying(
             assistant_role_name="SQL Developer",
             assistant_agent_kwargs=dict(model=self.GPT4o),
             user_role_name="Rubber Duck Debugging Assistant",
             user_agent_kwargs=dict(model=self.GPT4o),
-            task_prompt=prompt,
+            task_prompt=task_prompt,
             with_task_specify=False,
             #   task_specify_agent_kwargs=dict(model=model),
         )
@@ -946,14 +971,14 @@ class NLReviewTestCase(TestCase):
             n += 1
             assistant_response, user_response = role_play_session.step(input_msg)
             if assistant_response.terminated:
-                print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}.")
+                print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
                 break
             if user_response.terminated:
-                print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}.")
+                print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
                 break
 
-            print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n")
-            print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n")
+            print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+            print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
             
             parsed_response = json.loads(assistant_response.msg.content.strip())
             turns.append(parsed_response)

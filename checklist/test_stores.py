@@ -165,14 +165,13 @@ class ORC(AbstractTest):
         expect = Expect.eq()
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description)
+                         capability=capability, description=description, pred_match_gold=pred_match_gold)
         
         self.nl = nl
         self.sql = sql
         self.sql_dialect=sql_dialect
         self.db_id = db_id
         self.db_path = db_path
-        self.pred_match_gold = pred_match_gold
         
         self.key = "nl+schema"
         
@@ -199,7 +198,7 @@ class MTP(AbstractTest):
         expect = Expect.eq()
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description)
+                         capability=capability, description=description, pred_match_gold=pred_match_gold)
         
         self.nl = nl
         self.hint = hint
@@ -207,7 +206,6 @@ class MTP(AbstractTest):
         self.sql_dialect=sql_dialect
         self.db_id = db_id
         self.db_path = db_path
-        self.pred_match_gold = pred_match_gold
         
         self.key = "nl+schema+sql"
         
@@ -235,7 +233,7 @@ class DIF(AbstractTest):
         expect = Expect.eq()
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description)
+                         capability=capability, description=description, pred_match_gold=pred_match_gold)
         
         self.nl = nl
         self.hint = hint
@@ -243,7 +241,6 @@ class DIF(AbstractTest):
         self.sql_dialect=sql_dialect
         self.db_id = db_id
         self.db_path = db_path
-        self.pred_match_gold = pred_match_gold
         
         self.key = "nl+schema"
         
@@ -271,7 +268,7 @@ class EXP(AbstractTest):
         expect = Expect.eq()
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description)
+                         capability=capability, description=description, pred_match_gold=pred_match_gold)
         
         self.nl = nl
         self.hint = hint
@@ -279,7 +276,6 @@ class EXP(AbstractTest):
         self.sql_dialect=sql_dialect
         self.db_id = db_id
         self.db_path = db_path
-        self.pred_match_gold = pred_match_gold
 
         self.key = "nl+schema+sql"
         

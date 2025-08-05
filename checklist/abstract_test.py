@@ -1,4 +1,5 @@
 from abc import ABC
+from colorama import Fore, Style
 import dill
 from munch import Munch
 import numpy as np
@@ -67,7 +68,7 @@ def read_pred_file(path, file_format=None, format_fn=None, ignore_header=False):
 class AbstractTest(ABC):
     def __init__(self, data, expect, labels=None, meta=None, agg_fn='all',
                  templates=None, print_first=None, name=None, capability=None,
-                 description=None,test_cases=[]):
+                 description=None, pred_match_gold=None, test_cases=[]):
         self.data = data
         self.expect = expect
         self.labels = labels
@@ -80,6 +81,7 @@ class AbstractTest(ABC):
         self.name = name
         self.capability = capability
         self.description = description
+        self.pred_match_gold = pred_match_gold
         self.test_cases = test_cases
         
     def save(self, file):
@@ -118,7 +120,7 @@ class AbstractTest(ABC):
 
     def print1(self, idx, fixtures, preds, format_example_fn=None, nsamples=3):
         print(format_example_fn(idx, fixtures, preds))
-        print('----')
+        print('-'*50)
         
     def set_expect(self, expect):
         """Sets and updates expectation function
@@ -348,8 +350,6 @@ class AbstractTest(ABC):
                                  ignore_header=ignore_header)
         self.run_from_preds_confs(preds, confs, overwrite=overwrite)
 
-
-
     def run(self, predict_and_confidence_fn, overwrite=False, verbose=True, n=None, seed=None):
         """Runs test
 
@@ -380,14 +380,14 @@ class AbstractTest(ABC):
     def run1(self, overwrite=False, verbose=True):
         # Checking just to avoid predicting in vain, will be created in run_from_preds_confs
         self._check_create_results(overwrite, check_only=False)
-        # examples, result_indexes = self.example_list_and_indices(n, seed=seed)
 
         if verbose:
-            print('Running %d unit tests' % len(self.test_cases))
+            print(Fore.BLUE + 'Running %d test cases:\n' % len(self.test_cases) + '*'*100 + Style.RESET_ALL)
         self.results.test_cases = [
-            Munch(passed=pd, test_fixtures=fs, results=rs)
-            for pd, fs, rs in (ut.run() for ut in self.test_cases)
+            Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr)
+            for pd, fs, rs, dr in (ut.run() for ut in self.test_cases)
         ]
+        return all(ut.detection_result == True for ut in self.results.test_cases)
         
     def fail_idxs(self):
         self._check_results()
@@ -438,44 +438,29 @@ class AbstractTest(ABC):
     def get_stats1(self, idx):
         stats = Munch()
         self._check_results()
-        n_run = n = len(self.results.test_cases[idx].results.pred)
+        n_run = len(self.results.test_cases[idx].results.pred)
         fails = self.fail_idxs1(idx).shape[0]
         filtered = self.filtered_idxs1(idx).shape[0]
         nonfiltered = n_run - filtered
-        stats.testcases = n
-        if self.pred_match_gold is not None and self.pred_match_gold:
-            TP = n_run - fails  # correct SQL and test case passed
-            FN = fails   # correct SQL but test case failed (shouldn't have)
-            FP = 0
-            TN = 0
-        else:
-            # SQL is incorrect
-            TP = 0
-            FN = 0
-            FP = n_run - fails  # wrong SQL but test case passed (shouldn't have)
-            TN = fails 
-        
-        if n_run != n:
-            stats.testcases_run = n_run
-        if filtered:
-            stats.after_filtering = nonfiltered
-            stats.after_filtering_rate = 100 * nonfiltered / n_run
+        stats.testcases = n_run
         if nonfiltered != 0:
             stats.fails = fails
             stats.fail_rate = 100 * fails / nonfiltered
-            
+            # stats.success = n_run - fails
+            # stats.success_rate = 100 - stats.fail_rate
+
         return stats
 
-
     def print_stats1(self, idx):
+        detection_result = self.results.test_cases[idx].detection_result
         stats = self.get_stats1(idx)
-        print('Test cases:      %d' % stats.testcases)
-        if 'testcases_run' in stats:
-            print('Test cases run:  %d' % stats.testcases_run)
-        if 'after_filtering' in stats:
-            print('After filtering: %d (%.1f%%)' % (stats.after_filtering, stats.after_filtering_rate))
+        print(Fore.BLUE + 'Test cases:       ' + Fore.GREEN + '%d' % stats.testcases + Style.RESET_ALL)
+        print(Fore.BLUE + 'Detection result: ' + Fore.RED + '%s' % ("Correct" if detection_result else "Incorrect") + Style.RESET_ALL)
+        if self.pred_match_gold is None: return
+
+        print(Fore.BLUE + 'Detection:        ' + '✔️' if detection_result == self.pred_match_gold else '❌' + Style.RESET_ALL)
         if 'fails' in stats:
-            print('Fails (rate):    %d (%.1f%%)' % (stats.fails, stats.fail_rate))
+            print(Fore.BLUE + 'Fails (rate):     ' + Fore.GREEN + '%d (%.1f%%)' % (stats.fails, stats.fail_rate) + Style.RESET_ALL)
 
     def _label_meta(self, i):
         if self.labels is None:
@@ -511,7 +496,6 @@ class AbstractTest(ABC):
             print_fn = self.print
         def default_format_example(x, pred, conf, *args, **kwargs):
             softmax = type(conf) in [np.array, np.ndarray]
-            binary = False
             if softmax:
                 if conf.shape[0] == 2:
                     conf = conf[1]
@@ -531,7 +515,7 @@ class AbstractTest(ABC):
         if fails.shape[0] == 0:
             return
         print()
-        print('Example fails:')
+        print('Example failed:')
         fails = np.random.choice(fails, min(fails.shape[0], n), replace=False)
         for f in fails:
             d_idx = f if self.run_idxs is None else self.run_idxs[f]
@@ -558,38 +542,36 @@ class AbstractTest(ABC):
         n_per_testcase : int
             Maximum number of examples to show for each test case
         """
-        for idx in range(len(self.test_cases)):
-            print('\n%s\n' % self.test_cases[idx].name)
-            self.print_stats1(idx)
-            if not n:
-                return
-            if print_fn is None:
-                print_fn = self.print1
-            def default_format_example(idx, test_fixtures, results, *args, **kwargs):
-                output = []
-                for k, v in test_fixtures.items():
-                    output.append('%s:    %s' % (k, v[idx]))
-                output.append('\nStandard:    %s' % results.standard[idx])
-                for k, v in results.items():
-                    if k == 'standard': continue
-                    output.append('%s:    %s' % (k, v[idx]))
-                return '\n'.join(output)
+        def default_format_example(idx, test_fixtures, results, *args, **kwargs):
+            output = []
+            for k, v in test_fixtures.items():
+                output.append('%s:    %s' % (k, v[idx]))
+            output.append('\nStandard:    %s' % results.standard[idx])
+            for k, v in results.items():
+                if k == 'standard': continue
+                output.append('%s:    %s' % (k, v[idx]))
+            return '\n'.join(output)
+        # Initialize some defaults
+        if print_fn is None:
+            print_fn = self.print1
+        if format_example_fn is None:
+            format_example_fn = default_format_example
 
-            if format_example_fn is None:
-                format_example_fn = default_format_example
+        for idx in range(len(self.test_cases)):
+            print(Fore.RED + '%s\n' % self.test_cases[idx].name + Fore.WHITE + '-'*50 + '\n' + Style.RESET_ALL)
+
+            self.print_stats1(idx)
             fails = self.fail_idxs1(idx)
-            if fails.shape[0] == 0:
-                return
-            print()
-            print('Example fails:')
+            if fails.shape[0] == 0: return
+
+            print(Fore.BLUE + 'Example fails:' + Style.RESET_ALL)
             fails = np.random.choice(fails, min(fails.shape[0], n), replace=False)
             for f in fails:
                 d_idx = f if self.run_idxs is None else self.run_idxs[f]
-                # should be format_fn
-                # label, meta = self._label_meta(d_idx)
-                # print(label, meta)
                 print_fn(d_idx, self.results.test_cases[idx].test_fixtures, self.results.test_cases[idx].results, \
                          format_example_fn, nsamples=n_per_testcase)
+        
+        print(Fore.BLUE + '*'*100 + Style.RESET_ALL)
 
     def _form_examples_per_testcase_for_viz(
         self, xs, preds, confs, expect_results, labels=None, meta=None, nsamples=3):
