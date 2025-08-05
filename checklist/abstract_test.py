@@ -382,7 +382,7 @@ class AbstractTest(ABC):
         self._check_create_results(overwrite, check_only=False)
 
         if verbose:
-            print(Fore.BLUE + 'Running %d test cases:\n' % len(self.test_cases) + '*'*100 + Style.RESET_ALL)
+            print(Fore.BLUE + 'Running %d test cases:\n' % len(self.test_cases) + Style.RESET_ALL)
         self.results.test_cases = [
             Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr)
             for pd, fs, rs, dr in (ut.run() for ut in self.test_cases)
@@ -458,7 +458,7 @@ class AbstractTest(ABC):
         print(Fore.BLUE + 'Detection result: ' + Fore.RED + '%s' % ("Correct" if detection_result else "Incorrect") + Style.RESET_ALL)
         if self.pred_match_gold is None: return
 
-        print(Fore.BLUE + 'Detection:        ' + '✔️' if detection_result == self.pred_match_gold else '❌' + Style.RESET_ALL)
+        print(Fore.BLUE + f"Detection:        {'✔️' if detection_result == self.pred_match_gold else '❌'}" + Style.RESET_ALL)
         if 'fails' in stats:
             print(Fore.BLUE + 'Fails (rate):     ' + Fore.GREEN + '%d (%.1f%%)' % (stats.fails, stats.fail_rate) + Style.RESET_ALL)
 
@@ -558,11 +558,11 @@ class AbstractTest(ABC):
             format_example_fn = default_format_example
 
         for idx in range(len(self.test_cases)):
-            print(Fore.RED + '%s\n' % self.test_cases[idx].name + Fore.WHITE + '-'*50 + '\n' + Style.RESET_ALL)
+            print(Fore.RED + '%s\n' % self.test_cases[idx].name + '-'*50 + '\n' + Style.RESET_ALL)
 
             self.print_stats1(idx)
             fails = self.fail_idxs1(idx)
-            if fails.shape[0] == 0: return
+            if fails.shape[0] == 0: continue
 
             print(Fore.BLUE + 'Example fails:' + Style.RESET_ALL)
             fails = np.random.choice(fails, min(fails.shape[0], n), replace=False)
@@ -571,7 +571,7 @@ class AbstractTest(ABC):
                 print_fn(d_idx, self.results.test_cases[idx].test_fixtures, self.results.test_cases[idx].results, \
                          format_example_fn, nsamples=n_per_testcase)
         
-        print(Fore.BLUE + '*'*100 + Style.RESET_ALL)
+        print('*'*100)
 
     def _form_examples_per_testcase_for_viz(
         self, xs, preds, confs, expect_results, labels=None, meta=None, nsamples=3):

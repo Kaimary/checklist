@@ -1,4 +1,5 @@
 from collections import defaultdict
+import json
 import logging
 import random
 from typing import Any, List, Dict
@@ -109,3 +110,20 @@ def load_schema_with_simulated_examples(schema_with_examples: Dict[str, Any]):
                 modified_schema[table][column].append(value)
 
     return modified_schema
+
+def get_db_schema_from_json(db_id: str, schema_file: str) -> Dict[str, Any]:
+    """
+    Retrieves the schema (json) object from json file.
+    
+    Args:
+        schema_file (str): The path to the schema definition file.
+        
+    Returns:
+        Dict[str, Any]: A dictionary mapping of schema definition.
+    """
+    with open(schema_file, 'r') as f:
+        schema_list = json.load(f)
+
+    for s in schema_list:
+        if db_id == s["db_id"]: return s
+    raise ValueError(f"Schema for db_id {db_id} not found in {schema_file}")

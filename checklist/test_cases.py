@@ -1,3 +1,4 @@
+import copy
 import os, re, json, hashlib, random
 import numpy as np
 from pathlib import Path
@@ -11,6 +12,9 @@ from camel.models import ModelFactory
 from camel.configs import ChatGPTConfig
 from camel.types import ModelPlatformType, ModelType
 
+from checklist.red.parser.report import BugLevel
+from checklist.red.parser.schema import Schema
+from checklist.red.parser.red_parser import Query
 from checklist.spinner import Spinner
 from checklist.llm import CONFIGS, LLM
 from checklist.parsers import get_parser
@@ -19,7 +23,7 @@ from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_opt import duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
-from checklist.database_utils.db_info import load_schema_with_examples
+from checklist.database_utils.db_info import get_db_schema_from_json, load_schema_with_examples
 from checklist.database_utils.db_values.preprocess import _get_unique_values
 
 
@@ -72,7 +76,7 @@ class TestCase(ABC):
         return None
     
     def run(self):
-        """Run all generated test cases in this unit test
+        """Run all generated test instances in this test case
         """
         passes = []
         fixtures, results = Munch(), Munch()
@@ -90,9 +94,89 @@ class TestCase(ABC):
 
         return np.array(passes), fixtures, results, detection_result
 
+class SemanticCheckTestCase(TestCase):
+    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, schema_file, criteria=1.0):
+        super().__init__("Semantic Check Test Case", nl, hint, sql, sql_dialect, db_id, db_path)
+
+        self.instance_saved_path = os.path.join(
+            TEST_INSTANCE_ROOT_PATH, "semantic", "semantic_check", db_id, hashing(db_id, sql=sql))
+        os.makedirs(self.instance_saved_path, exist_ok=True)
+        
+        self.schema = Schema(get_db_schema_from_json(db_id, schema_file), db_path)
+        self.instances = self._generator()
+
+    def set_settings(self, **kwargs):
+        self.criteria = kwargs.get("criteria", 1.0)
+
+    def _compare_query_results(self, pred):
+        if pred: return False
+        return True
+    
+    def _test_fn(self, ret: Munch):
+        ret.results = Munch()
+        ret.results.warnings = [bug for bug in ret.test_fixtures.bugs if bug.level == BugLevel.WARNING]
+        ret.results.pred = [bug for bug in ret.test_fixtures.bugs if bug.level == BugLevel.ERROR]
+        ret.results.standard = "pred is empty"
+        passed = self._compare_query_results(ret.results.pred)
+        return passed, ret.test_fixtures, ret.results
+    
+    def write_test_fixture_file(self, output_dir, **kwargs):
+        data = {
+            "database": kwargs.get("database"),
+            "sql": kwargs.get("sql"),
+            "bugs": '\n'.join(str(bug) for bug in kwargs.get("bugs"))
+        }
+        output_path = os.path.join(output_dir, 'meta.json')
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        
+    def _form_instance(self, idx, ret):
+        """
+        Form each single test case, and save related test fixture for serialization. 
+        Format as: a list of `bugs`
+        
+        Parameters
+        ----------
+        ret: Dict with `data` and `result` keys
+        No return value
+        """
+        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
+        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
+        
+        # Create test data instances
+        ret.test_fixtures.db = os.path.join(TEST_INSTANCE_ROOT_PATH, f"{self.db_id}.sqlite")
+        # test case serialization
+        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
+            database=ret.test_fixtures.db, sql=self.sql, bugs=ret.test_fixtures.bugs)
+        
+        return ret
+    
+    def _generator(self):
+        bugs, outputs = [], []
+        spinner = Spinner(f"Generating Test Case `{self.name}` test instance ...")
+        with spinner:
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            try:
+                parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            except Exception as e:
+                print(e)
+                bugs.append(f"{e} SQL parse failed! \nSQL: {self.sql}")
+            if parsed_query:
+                try:
+                    bugs.extend(parsed_query.validate())
+                except Exception as e:
+                    bugs.append(f"{e} Query validation process failed. \nSQL: {self.sql}")
+
+            ret.test_fixtures.bugs = bugs
+            outputs.append(self._form_instance(len(outputs), ret))
+            del parsed_query
+
+        return outputs
+
 class OracleResultTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10, criteria=1.0):
-        super().__init__("Oracle Result Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Oracle Result Test Case", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
 
         self.instance_saved_path = os.path.join(
@@ -284,7 +368,7 @@ class OracleResultTestCase(TestCase):
 
 class NLRelaxTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
-        super().__init__("Natural Language Relexing Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Natural Language Relexing Test Case", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", db_id, hashing(db_id, nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
@@ -407,7 +491,7 @@ class NLRelaxTestCase(TestCase):
 
 class NLStrengthenTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=10):
-        super().__init__("Natural Language Strengthening Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Natural Language Strengthening Test Case", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", db_id, hashing(nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
@@ -524,7 +608,7 @@ class NLStrengthenTestCase(TestCase):
 
 class CrossModelTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, num=3, active_llm_num=3):
-        super().__init__("Majority Voting Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Majority Voting Test Case", nl, hint, sql, sql_dialect, db_id, db_path, num)
         self.active_llm_num = active_llm_num
         self.llm_pool = self._create_llm_pool()
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "majority_vote", db_id, hashing(db_id, nl=nl, sql=sql))
@@ -625,7 +709,7 @@ class CrossModelTestCase(TestCase):
 
 class SelfConsistencyTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path, model=None, num=10):
-        super().__init__("Query Consistency Unit Test", nl, hint, sql, sql_dialect, db_id, db_path, num)
+        super().__init__("Query Consistency Test Case", nl, hint, sql, sql_dialect, db_id, db_path, num)
         if model is None:
             raise(Exception('No model provided. Please specify your NL2SQL model first ...'))
         self.model = model
@@ -742,7 +826,7 @@ class SelfConsistencyTestCase(TestCase):
 
 class QueryReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
-        super().__init__("Step-through Query Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
+        super().__init__("Step-through Query Review Test Case", nl, hint, sql, sql_dialect, db_id, db_path)
         self.GPT4o = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
@@ -873,7 +957,7 @@ class QueryReviewTestCase(TestCase):
 
 class NLReviewTestCase(TestCase):
     def __init__(self, nl, hint, sql, sql_dialect, db_id, db_path):
-        super().__init__("Step-through Natural Language Review Unit Test", nl, hint, sql, sql_dialect, db_id, db_path)
+        super().__init__("Step-through Natural Language Review Test Case", nl, hint, sql, sql_dialect, db_id, db_path)
         self.GPT4o = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
