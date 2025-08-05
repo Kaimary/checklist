@@ -3,7 +3,7 @@ from collections import defaultdict, OrderedDict
 import dill
 import json
 from .abstract_test import load_test, read_pred_file
-from .test_stores import MFT, INV, DIR
+from .test_stores import DIF, EXP, MFT, MTP, ORC, SEM
 
 from .viewer.suite_summarizer import SuiteSummarizer
 
@@ -71,8 +71,11 @@ class TestSuite:
             del self.info[name]
         type_map = {
             MFT: 'MFT',
-            INV: 'INV',
-            DIR: 'DIR',
+            SEM: 'SEM',
+            MTP: 'MTP',
+            DIF: 'DIF',
+            EXP: 'EXP',
+            ORC: 'ORC',
         }
         typez = type_map[type(test)]
         self.tests[name] = test
