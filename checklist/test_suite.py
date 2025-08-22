@@ -15,6 +15,10 @@ class TestSuite:
         self.print_fn = print_fn
         self.test_ranges = {}
 
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
+        for name, t in self.tests.items():
+            t.set(nl=nl, hint=hint, pred=pred, db_id=db_id, db_root_path=db_root_path, schema_file_path=schema_file_path, pred_match_gold=pred_match_gold)
+
     @staticmethod
     def from_file(path):
         """Loads suite from file
@@ -292,13 +296,16 @@ class TestSuite:
             Seed to use if n is not None
 
         """
+        ret = {}
         detection_results = []
         for name, t in self.tests.items():
-            if verbose:
-                print(f'Running {name}')
-            detection_results.append(t.run1(verbose=verbose, **kwargs))
+            if verbose: print(f'Running {name}')
+            res = t.run1(verbose=verbose, **kwargs)
+            detection_results.append(res)
+            ret[name] = res
+        ret["judgment"] = all(detection_results)
 
-        return all(detection_results)
+        return ret
             
     def summary(self, types=None, capabilities=None, **kwargs):
         """Print stats and example failures for each test.
@@ -366,7 +373,6 @@ class TestSuite:
             print()
         print()
         print()
-
 
     def visual_summary_by_test(self, testname):
         """Displays visual summary for a single test.

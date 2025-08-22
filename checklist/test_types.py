@@ -52,26 +52,24 @@ class SEM(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, sql_dialect, db_id, db_root_path, schema_file,
-                 use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
+        self.key = "sql+schema"
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description, pred_match_gold=pred_match_gold)
-        
-        self.nl = nl
-        self.sql = sql
-        self.sql_dialect=sql_dialect
-        self.db_id = db_id
-        self.db_root_path = db_root_path
-        self.schema_file = schema_file
-
-        self.key = "sql+schema"
-        
+                         capability=capability, description=description)
+    
+    def set(self, **kwargs):
+        self.nl = kwargs.get("nl", None)
+        self.hint = kwargs.get("hint", None)
+        self.pred = kwargs.get("pred", None)
+        self.db_id = kwargs.get("db_id", None)
+        self.db_root_path = kwargs.get("db_root_path", None)
+        self.schema_file_path = kwargs.get("schema_file_path", None)
         self.test_cases = [
-            SemanticCheckTestClass(nl, hint, sql, sql_dialect, db_id, db_root_path, schema_file)
+            SemanticCheckTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, self.schema_file_path)
         ]
 
 class ORC(AbstractTest):
@@ -85,24 +83,24 @@ class ORC(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, db_id, db_root_path, 
-                 use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
+        self.key = "nl+schema"
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description, pred_match_gold=pred_match_gold)
-        
-        self.nl = nl
-        self.sql = sql
-        self.db_id = db_id
-        self.db_root_path = db_root_path
-        
-        self.key = "nl+schema"
-        
+                         capability=capability, description=description)
+
+    def set(self, **kwargs):
+        self.nl = kwargs.get("nl", None)
+        self.hint = kwargs.get("hint", None)
+        self.pred = kwargs.get("pred", None)
+        self.db_id = kwargs.get("db_id", None)
+        self.db_root_path = kwargs.get("db_root_path", None)
+        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            OracleResultTestClass(nl, hint, sql, db_id, db_root_path, num=5)
+            OracleResultTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=5)
         ]
 
 class MTP(AbstractTest):
@@ -117,23 +115,21 @@ class MTP(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, db_id, db_root_path, 
-                 use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
+        self.key = "nl+schema+sql"
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description, pred_match_gold=pred_match_gold)
-        
+                         capability=capability, description=description)
+    
+    def set(self, nl, hint, sql, db_id, db_root_path, pred_match_gold=None):
         self.nl = nl
-        self.hint = hint
         self.sql = sql
         self.db_id = db_id
         self.db_root_path = db_root_path
-        
-        self.key = "nl+schema+sql"
-        
+        self.pred_match_gold = pred_match_gold
         self.test_cases = [
             NLRelaxTestClass(nl, hint, sql, db_id, db_root_path, num=3),
             NLStrengthenTestClass(nl, hint, sql, db_id, db_root_path, num=3)
@@ -151,23 +147,21 @@ class DIF(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, db_id, db_root_path, 
-                 use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, ache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
+        self.key = "nl+schema"
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description, pred_match_gold=pred_match_gold)
-        
+                         capability=capability, description=description)
+
+    def set(self, nl, hint, sql, db_id, db_root_path, pred_match_gold=None):
         self.nl = nl
-        self.hint = hint
         self.sql = sql
         self.db_id = db_id
         self.db_root_path = db_root_path
-        
-        self.key = "nl+schema"
-        
+        self.pred_match_gold=pred_match_gold
         self.test_cases = [
             CrossModelTestClass(nl, hint, sql, db_id, db_root_path, num=3),
             SelfConsistencyTestClass(nl, hint, sql, db_id, db_root_path, num=3, model=LLM(model_name="gpt-4o-mini-0708"))
@@ -185,23 +179,24 @@ class EXP(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, nl, hint, sql, db_id, db_root_path,
-                 use_cache=True, pred_match_gold=None, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
+        self.key = "nl+schema+sql"
         super().__init__(data, expect, labels=labels, meta=meta, agg_fn=agg_fn,
                          templates=templates, print_first=True, name=name,
-                         capability=capability, description=description, pred_match_gold=pred_match_gold)
+                         capability=capability, description=description)
         
+
+    def set(self, nl, hint, sql, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         self.nl = nl
         self.hint = hint
         self.sql = sql
         self.db_id = db_id
         self.db_root_path = db_root_path
-
-        self.key = "nl+schema+sql"
-        
+        self.schema_file_path = schema_file_path
+        self.pred_match_gold = pred_match_gold
         self.test_cases = [
             QueryReviewTestClass(nl, hint, sql, db_id, db_root_path),
             # NLReviewTestClass(nl, hint, sql, db_id, db_root_path)

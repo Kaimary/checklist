@@ -119,7 +119,10 @@ class QueryRelaxingOutput(BaseModel):
     nl_mutant: str = Field(description="the natural language mutant transformed from the orignal natural language after applying the relaxing")
     sql_mutant: str = Field(description="the query mutant transformed from the orignal SQL after applying the relaxing")
 
-
+class LLMJudgmentOutput(BaseModel):
+    """Model for LLM judgment output."""
+    chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
+    judgment: str = Field(description="Yes or No")
 
 def get_parser(parser_name: str) -> BaseOutputParser:
     """
@@ -148,6 +151,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_mutation_generation": MarkDownOutputParser,
+        "llm_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMJudgmentOutput),
     }
 
     if parser_name not in parser_configs:

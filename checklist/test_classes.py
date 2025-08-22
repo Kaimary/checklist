@@ -94,15 +94,15 @@ class TestClass(ABC):
         return np.array(passes), fixtures, results, detection_result
 
 class SemanticCheckTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, schema_file, criteria=1.0):
-        super().__init__("Semantic Check Test Case", nl, hint, sql, db_id, db_root_path)
+    def __init__(self, nl, hint, sql, db_id, db_root_path, schema_file_path, criteria=1.0):
+        super().__init__("Semantic Check Test Class", nl, hint, sql, db_id, db_root_path)
 
         self.instance_saved_path = os.path.join(
             TEST_INSTANCE_ROOT_PATH, "semantic", "semantic_check", db_id, hashing(db_id, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
         self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        self.schema = Schema(get_db_schema_from_json(db_id, schema_file), self.db_path)
+        self.schema = Schema(get_db_schema_from_json(db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def set_settings(self, **kwargs):
@@ -176,7 +176,7 @@ class SemanticCheckTestClass(TestClass):
 
 class OracleResultTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path, num=10, criteria=1.0):
-        super().__init__("Oracle Result Test Case", nl, hint, sql, db_id, db_root_path, num)
+        super().__init__("Oracle Result Test Class", nl, hint, sql, db_id, db_root_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
 
         self.instance_saved_path = os.path.join(
@@ -379,7 +379,7 @@ class OracleResultTestClass(TestClass):
 
 class NLRelaxTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path, num=10):
-        super().__init__("Natural Language Relexing Test Case", nl, hint, sql, db_id, db_root_path, num)
+        super().__init__("Natural Language Relexing Test Class", nl, hint, sql, db_id, db_root_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", db_id, hashing(db_id, nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
@@ -503,7 +503,7 @@ class NLRelaxTestClass(TestClass):
 
 class NLStrengthenTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path, num=10):
-        super().__init__("Natural Language Strengthening Test Case", nl, hint, sql, db_id, db_root_path, num)
+        super().__init__("Natural Language Strengthening Test Class", nl, hint, sql, db_id, db_root_path, num)
         self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", db_id, hashing(nl, sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
@@ -621,7 +621,7 @@ class NLStrengthenTestClass(TestClass):
 
 class CrossModelTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path, num=3, active_llm_num=3):
-        super().__init__("Majority Voting Test Case", nl, hint, sql, db_id, db_root_path, num)
+        super().__init__("Majority Voting Test Class", nl, hint, sql, db_id, db_root_path, num)
         self.active_llm_num = active_llm_num
         self.llm_pool = self._create_llm_pool()
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "majority_vote", db_id, hashing(db_id, nl=nl, sql=sql))
@@ -723,7 +723,7 @@ class CrossModelTestClass(TestClass):
 
 class SelfConsistencyTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path, model=None, num=10):
-        super().__init__("Query Consistency Test Case", nl, hint, sql, db_id, db_root_path, num)
+        super().__init__("Query Consistency Test Class", nl, hint, sql, db_id, db_root_path, num)
         if model is None:
             raise(Exception('No model provided. Please specify your NL2SQL model first ...'))
         self.model = model
@@ -841,7 +841,7 @@ class SelfConsistencyTestClass(TestClass):
 
 class QueryReviewTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path):
-        super().__init__("Step-through Query Review Test Case", nl, hint, sql, db_id, db_root_path)
+        super().__init__("Step-through Query Review Test Class", nl, hint, sql, db_id, db_root_path)
         self.GPT4o = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
@@ -973,7 +973,7 @@ class QueryReviewTestClass(TestClass):
 
 class NLReviewTestClass(TestClass):
     def __init__(self, nl, hint, sql, db_id, db_root_path):
-        super().__init__("Step-through Natural Language Review Test Case", nl, hint, sql, db_id, db_root_path)
+        super().__init__("Step-through Natural Language Review Test Class", nl, hint, sql, db_id, db_root_path)
         self.GPT4o = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,

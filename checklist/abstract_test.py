@@ -68,7 +68,7 @@ def read_pred_file(path, file_format=None, format_fn=None, ignore_header=False):
 class AbstractTest(ABC):
     def __init__(self, data, expect, labels=None, meta=None, agg_fn='all',
                  templates=None, print_first=None, name=None, capability=None,
-                 description=None, pred_match_gold=None, test_cases=[]):
+                 description=None, test_cases=[]):
         self.data = data
         self.expect = expect
         self.labels = labels
@@ -81,7 +81,6 @@ class AbstractTest(ABC):
         self.name = name
         self.capability = capability
         self.description = description
-        self.pred_match_gold = pred_match_gold
         self.test_cases = test_cases
         
     def save(self, file):
@@ -379,7 +378,7 @@ class AbstractTest(ABC):
 
     def run1(self, overwrite=False, verbose=True):
         # Checking just to avoid predicting in vain, will be created in run_from_preds_confs
-        self._check_create_results(overwrite, check_only=False)
+        self._check_create_results(overwrite=True, check_only=False)
 
         if verbose:
             print(Fore.BLUE + 'Running %d test cases' % len(self.test_cases) + Style.RESET_ALL)

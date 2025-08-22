@@ -3,6 +3,7 @@ import random
 import time
 from abc import ABC, abstractmethod
 
+from langchain_deepseek import ChatDeepSeek
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
@@ -51,6 +52,10 @@ CONFIGS: Dict[str, Dict[str, Any]] = {
         "constructor": AzureChatOpenAI,
         "params": {"model": "gpt-4o-mini-0708", "temperature": 0}
     },
+    "deepseek-chat": {
+        "constructor": ChatDeepSeek,
+        "params": {"model": "deepseek-chat", "temperature": 0}
+    }
     # "claude-3-opus-20240229": {
     #     "constructor": ChatAnthropic,
     #     "params": {"model": "claude-3-opus-20240229", "temperature": 0}

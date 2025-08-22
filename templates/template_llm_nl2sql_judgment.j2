@@ -1,0 +1,33 @@
+You are a data science expert.
+Below, you are presented with a database schema, a question (with hint if applicable), and a SQL query.
+Your task is to:
+- Read and understand the schema and the natural language question.
+- Determine whether the correctness of provided SQL query based on the schema and question.
+- Provide your reasoning process and your final judgement (Correct / Incorrect).
+
+Database Schem
+###
+{{DATABASE_SCHEMA}}
+
+This schema offers an in-depth description of the database's architecture, detailing tables, columns, primary keys, foreign keys, and any pertinent information regarding relationships or constraints. Special attention should be given to the examples listed beside each column, as they directly hint at which columns are relevant to our query.
+
+###
+Question: 
+{{QUESTION}}
+
+Hint:
+{{HINT}}
+
+SQL:
+{{SQL}}
+
+Please respond with a JSON object structured as follows:
+{% raw %}
+{
+    "chain_of_thought_reasoning": "Your thought process on how you think.",
+    "judgement": "Correct / Incorrect",
+}
+{% endraw %}
+
+
+Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

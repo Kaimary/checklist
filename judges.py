@@ -1,0 +1,84 @@
+import os
+from checklist.llm import LLM
+from checklist.test_types import SEM, DIF, EXP, MTP, ORC
+from checklist.test_suite import TestSuite
+from checklist.parsers import get_parser
+from checklist.prompts import get_prompt
+from checklist.database_manager import DatabaseManager
+from checklist.database_utils.db_catalog.csv_utils import load_tables_description
+from checklist.database_utils.db_info import load_schema_with_examples
+from checklist.database_utils.db_values.preprocess import _get_unique_values
+
+class AbstractJudge:
+    def __init__(self):
+        pass
+
+class LLMJudge(AbstractJudge):
+    def __init__(self, model_name: str):
+        super().__init__()
+        self.model_name = model_name
+        self.model = LLM(model_name=model_name)
+
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
+        self.nl = nl
+        self.hint = hint
+        self.pred = pred
+        self.db_id = db_id
+        self.db_root_path = db_root_path
+        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
+        self.schema_file_path = schema_file_path
+        self.pred_match_gold = pred_match_gold
+
+        schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
+        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=schema,
+            schema_with_examples=None, # schema_with_examples,
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
+
+    def run(self):
+        parser = get_parser(parser_name="llm-nl2sql-judgement")
+        prompt = get_prompt(
+            template_name="llm-nl2sql-judgement", 
+            schema_string=self.schema_string
+        )
+        response = self.model(prompt, parser, request_kwargs={
+            "HINT": self.hint, 
+            "QUESTION": self.nl,
+            "SQL": self.pred
+            }
+        )
+        return response
+    
+class GuardianJudge(AbstractJudge):
+    def __init__(self):
+        super().__init__()
+        self.suite = TestSuite()
+        test1 = SEM()
+        test2 = ORC()
+        # test1 = ORC(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
+        # test1 = MTP(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
+        # test1 = DIF(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
+        # test1 = EXP(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
+        self.suite.add(test1, name="Semantic Check Test", capability="semantic_check", description="Semantic check test for SQL correctness")
+        self.suite.add(test2, name="Oracle-based Test", capability="oracle_based", description="Oracle-based test for SQL correctness")
+
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
+        self.suite.set(
+            nl=nl,
+            hint=hint,
+            pred=pred,
+            db_id=db_id,
+            db_root_path=db_root_path,
+            schema_file_path=schema_file_path,
+            pred_match_gold=pred_match_gold
+        )
+
+    def run(self):
+        return self.suite.run1()
+    
+    def summary(self):
+        return self.suite.summary1()
