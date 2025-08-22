@@ -1,6 +1,5 @@
 import os
 from checklist.llm import LLM
-from checklist.test_types import SEM, DIF, EXP, MTP, ORC
 from checklist.test_suite import TestSuite
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
@@ -54,17 +53,20 @@ class LLMJudge(AbstractJudge):
         return response
     
 class GuardianJudge(AbstractJudge):
-    def __init__(self):
+    def __init__(self, *tests):
         super().__init__()
         self.suite = TestSuite()
-        test1 = SEM()
-        test2 = ORC()
-        # test1 = ORC(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
-        # test1 = MTP(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
-        # test1 = DIF(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
-        # test1 = EXP(nl, hint, pred, db_id, args.db_root_path, pred_match_gold=judgment_label)
-        self.suite.add(test1, name="Semantic Check Test", capability="semantic_check", description="Semantic check test for SQL correctness")
-        self.suite.add(test2, name="Oracle-based Test", capability="oracle_based", description="Oracle-based test for SQL correctness")
+        # Iterate over the provided test classes and add them to the suite
+        for test in tests:
+            test_instance = test()  # Create an instance of the test class
+            self.suite.add(test_instance, name=f"{test.__name__} Test", capability=f"{test.__name__.lower()}", description=f"{test.__name__} test for SQL correctness")
+    # def __init__(self):
+    #     super().__init__()
+    #     self.suite = TestSuite()
+    #     test1 = SEM()
+    #     # test2 = ORC()
+    #     self.suite.add(test1, name="Semantic Check Test", capability="semantic_check", description="Semantic check test for SQL correctness")
+    #     # self.suite.add(test2, name="Oracle-based Test", capability="oracle_based", description="Oracle-based test for SQL correctness")
 
     def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         self.suite.set(

@@ -114,8 +114,8 @@ class SemanticCheckTestClass(TestClass):
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.warnings = [bug for bug in ret.test_fixtures.bugs if bug.level == BugLevel.WARNING]
-        ret.results.pred = [bug for bug in ret.test_fixtures.bugs if bug.level == BugLevel.ERROR]
+        ret.results.warnings = [bug for bug in ret.test_fixtures.bugs if type(bug) != str and bug.level == BugLevel.WARNING]
+        ret.results.pred = [bug for bug in ret.test_fixtures.bugs if type(bug) == str or bug.level == BugLevel.ERROR]
         ret.results.standard = "pred is empty"
         passed = self._compare_query_results(ret.results.pred)
         return passed, ret.test_fixtures, ret.results
