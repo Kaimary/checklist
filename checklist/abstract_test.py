@@ -382,7 +382,7 @@ class AbstractTest(ABC):
         self._check_create_results(overwrite, check_only=False)
 
         if verbose:
-            print(Fore.BLUE + 'Running %d test cases:\n' % len(self.test_cases) + Style.RESET_ALL)
+            print(Fore.BLUE + 'Running %d test cases' % len(self.test_cases) + Style.RESET_ALL)
         self.results.test_cases = [
             Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr)
             for pd, fs, rs, dr in (ut.run() for ut in self.test_cases)

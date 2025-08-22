@@ -3,7 +3,7 @@ from collections import defaultdict, OrderedDict
 import dill
 import json
 from .abstract_test import load_test, read_pred_file
-from .test_stores import DIF, EXP, MFT, MTP, ORC, SEM
+from .test_types import DIF, EXP, MFT, MTP, ORC, SEM
 
 from .viewer.suite_summarizer import SuiteSummarizer
 
@@ -292,10 +292,13 @@ class TestSuite:
             Seed to use if n is not None
 
         """
-        for n, t in self.tests.items():
+        detection_results = []
+        for name, t in self.tests.items():
             if verbose:
-                print('Running', n)
-            t.run1(verbose=verbose, **kwargs)
+                print(f'Running {name}')
+            detection_results.append(t.run1(verbose=verbose, **kwargs))
+
+        return all(detection_results)
             
     def summary(self, types=None, capabilities=None, **kwargs):
         """Print stats and example failures for each test.
@@ -336,6 +339,34 @@ class TestSuite:
                 print()
             print()
             print()
+
+    def summary1(self, types=None, capabilities=None, **kwargs):
+        """Print stats and example failures for each test.
+        See summary in abstract_test.py
+
+        Parameters
+        ----------
+        types : list(string)
+            If not None, will only show tests of these test types.
+            Options are MFT, INV, and DIR
+        capabilities : list(string)
+            If not None, will only show tests with these capabilities.
+        **kwargs : type
+            Will be passed as arguments to each test.summary()
+
+        """
+        tests = self.tests.keys()
+        for n in tests:
+            if 'format_example_fn' not in kwargs:
+                kwargs['format_example_fn'] = self.info[n].get('format_example_fn', self.format_example_fn)
+            if 'print_fn' not in kwargs:
+                kwargs['print_fn'] = self.info[n].get('print_fn', self.print_fn)
+            self.tests[n].summary1(**kwargs)
+            print()
+            print()
+        print()
+        print()
+
 
     def visual_summary_by_test(self, testname):
         """Displays visual summary for a single test.

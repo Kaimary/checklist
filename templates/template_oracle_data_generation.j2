@@ -2,7 +2,7 @@ You are a data science expert.
 Below, you are presented with a database schema and a question.
 Your task is to:
 - Read and understand the schema and the natural language (NL) question.
-- Simulate the minimum valid database instance that satisfies the schema.
+- Simulate a minimum database (with data instances) that derives from the schema. If any table does not use in the query, skip it.
 - Provide the resulting data that would be returned when the NL query is executed on that database.
 
 Database Schema
@@ -24,7 +24,7 @@ Please respond with a JSON object structured as follows:
 {
     "chain_of_thought_reasoning": "Your thought process on how you think.",
     "database_instances": {
-        "table1" : [["a data row of table1"], ...]
+        "table1": [["a data row of table1"], ...]
         "table2": [["a data row of table2"], ...]
         ...
     }

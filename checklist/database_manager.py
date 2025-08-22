@@ -17,7 +17,7 @@ from .database_utils.db_catalog.preprocess import EMBEDDING_FUNCTION
 from .database_utils.db_catalog.csv_utils import load_tables_description
 
 load_dotenv(override=True)
-DB_ROOT_PATH = Path(os.getenv("DB_ROOT_PATH"))
+# DB_ROOT_PATH = Path(os.getenv("DB_ROOT_PATH"))
 
 class DatabaseManager:
     """
@@ -27,21 +27,21 @@ class DatabaseManager:
     _instance = None
     _lock = Lock()
 
-    def __new__(cls, db_id=None):
+    def __new__(cls, db_id=None, db_root_path=None):
         if db_id is not None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super(DatabaseManager, cls).__new__(cls)
-                    cls._instance._init(db_id)
+                    cls._instance._init(db_id, db_root_path)
                 elif cls._instance.db_id != db_id:
-                    cls._instance._init(db_id)
+                    cls._instance._init(db_id, db_root_path)
                 return cls._instance
         else:
             if cls._instance is None:
                 raise ValueError("DatabaseManager instance has not been initialized yet.")
             return cls._instance
 
-    def _init(self, db_id: str):
+    def _init(self, db_id: str, db_root_path: str):
         """
         Initializes the DatabaseManager instance.
 
@@ -49,6 +49,7 @@ class DatabaseManager:
             db_id (str): The database identifier.
         """
         self.db_id = db_id
+        self.db_root_path = Path(db_root_path)
         self._set_paths()
         self.lsh = None
         self.minhashes = None
@@ -56,8 +57,8 @@ class DatabaseManager:
 
     def _set_paths(self):
         """Sets the paths for the database files and directories."""
-        self.db_path = DB_ROOT_PATH / self.db_id / f"{self.db_id}.sqlite"
-        self.db_directory_path = DB_ROOT_PATH / self.db_id
+        self.db_path = self.db_root_path / self.db_id / f"{self.db_id}.sqlite"
+        self.db_directory_path = self.db_root_path / self.db_id
 
     def set_lsh(self) -> str:
         """Sets the LSH and minhashes attributes by loading from pickle files."""
