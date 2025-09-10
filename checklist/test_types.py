@@ -70,7 +70,8 @@ class SEM(AbstractTest):
         self.schema_file_path = kwargs.get("schema_file_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            SemanticCheckTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, self.schema_file_path)
+            SemanticCheckTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path)
         ]
 
 class ORC(AbstractTest):
@@ -101,7 +102,8 @@ class ORC(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            OracleResultTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3)
+            OracleResultTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]
 
 class MTP(AbstractTest):
@@ -133,8 +135,16 @@ class MTP(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            NLRelaxTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3),
-            NLStrengthenTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3)
+            NLRelaxTestClass(
+                nl=self.nl, 
+                hint=self.hint, 
+                sql=self.pred, 
+                db_id=self.db_id, 
+                db_root_path=self.db_root_path,
+                num=3
+            ),
+            NLStrengthenTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]
         
 class DIF(AbstractTest):
@@ -149,7 +159,7 @@ class DIF(AbstractTest):
             Expectation function, takes an AbstractTest (self) as parameter
             see expect.py for details.
     """
-    def __init__(self, ache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
+    def __init__(self, use_cache=True, data=None, expect=None, meta=None, agg_fn='all_except_first',
                  templates=None, name=None, labels=None, capability=None, description=None):
 
         expect = Expect.eq()
@@ -166,8 +176,11 @@ class DIF(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            CrossModelTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3),
-            SelfConsistencyTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3, model=LLM(model_name="gpt-4o-mini-0708"))
+            CrossModelTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3),
+            SelfConsistencyTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, 
+                num=3, model=LLM(model_name="gpt-4o-mini-0708"))
         ]
 
 class EXP(AbstractTest):
@@ -199,6 +212,8 @@ class EXP(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            QueryReviewTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path),
-            # NLReviewTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path)
+            QueryReviewTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3),
+            # NLReviewTestClass(
+            # nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]

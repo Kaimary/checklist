@@ -42,7 +42,8 @@ def hashing(schema, nl=None, sql=None):
     return hashing_str
 
 class TestClass(ABC):
-    def __init__(self, name, nl, hint, sql, db_id, db_root_path, num=-1, criteria=1.0, use_cache=False):
+    def __init__(self, name, nl, hint, sql, db_id, db_root_path, 
+                 backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0, use_cache=False):
         self.name = name
         self.num = num
         self.nl=nl
@@ -50,6 +51,7 @@ class TestClass(ABC):
         self.sql=sql
         self.db_id=db_id
         self.db_root_path=db_root_path
+        self.backbone_llm_model_name = backbone_llm_model_name
         self.use_cache=use_cache
         self.criteria = criteria
 
@@ -95,15 +97,15 @@ class TestClass(ABC):
         return np.array(passes), fixtures, results, detection_result
 
 class SemanticCheckTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, schema_file_path, criteria=1.0):
-        super().__init__("Semantic Check Test Class", nl, hint, sql, db_id, db_root_path)
+    def __init__(self, schema_file_path, **kwargs):
+        super().__init__("Semantic Check Test Class", **kwargs)
 
         self.instance_saved_path = os.path.join(
-            TEST_INSTANCE_ROOT_PATH, "semantic", "semantic_check", db_id, hashing(db_id, sql=sql))
+            TEST_INSTANCE_ROOT_PATH, "semantic", "semantic_check", self.db_id, hashing(self.db_id, sql=self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        self.schema = Schema(get_db_schema_from_json(db_id, schema_file_path), self.db_path)
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
+        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def set_settings(self, **kwargs):
@@ -176,22 +178,22 @@ class SemanticCheckTestClass(TestClass):
         return outputs
 
 class OracleResultTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, num=10, criteria=1.0):
-        super().__init__("Oracle Result Test Class", nl, hint, sql, db_id, db_root_path, num)
-        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+    def __init__(self, prunned_threshold=30, **kwargs):
+        super().__init__("Oracle Result Test Class", **kwargs)
+        self.backbone = LLM(model_name=self.backbone_llm_model_name)
 
         self.instance_saved_path = os.path.join(
-            TEST_INSTANCE_ROOT_PATH, "oracle", "oracle_result", db_id, hashing(db_id, nl=nl))
+            TEST_INSTANCE_ROOT_PATH, "oracle", "oracle_result", self.db_id, hashing(self.db_id, nl=self.nl))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        self.schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
+        self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         self.schema_pruned = False
-        if any(len(cols) > 30 for cols in self.schema.values()):
-            logging.warning(f"Database {db_id} has tables with more than 20 columns. Truncating for schema ...")
+        if any(len(cols) > prunned_threshold for cols in self.schema.values()):
+            logging.warning(f"Database {self.db_id} has tables with more than 20 columns. Truncating for schema ...")
             parser = get_parser(parser_name="schema_pruning")
             prompt = get_prompt(template_name="schema_pruning")
-            response = self.GPT4o(prompt, parser, request_kwargs={
+            response = self.backbone(prompt, parser, request_kwargs={
                 "HINT": self.hint, 
                 "QUESTION": self.nl,
                 "DATABASE_SCHEMA": json.dumps(self.schema, indent=4)
@@ -310,8 +312,8 @@ class OracleResultTestClass(TestClass):
                 # Otherwise, double check which `result` is the correct one
                 prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
                 parser = get_parser(parser_name="oracle_result_checking")
-                response = self.GPT4o(prompt, parser, request_kwargs={
-                    "HINT": self.hint, 
+                response = self.backbone(prompt, parser, request_kwargs={
+                    "HINT": self.hint,
                     "QUESTION": self.nl,
                     "test_cases": json.dumps(h['data'], indent=4),
                     "RESULT1": json.dumps(h['label_result'], indent=4),
@@ -403,7 +405,7 @@ class OracleResultTestClass(TestClass):
                     schema_string=self.schema_string,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.GPT4o(prompt, parser, request_kwargs={
+                response = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint,
                     "QUESTION": self.nl
                     }
@@ -415,7 +417,7 @@ class OracleResultTestClass(TestClass):
                     template_name="oracle_data_verification", 
                     schema_string=self.schema_string
                 )
-                response2 = self.GPT4o(prompt2, parser2, request_kwargs={
+                response2 = self.backbone(prompt2, parser2, request_kwargs={
                     "HINT": self.hint,
                     "QUESTION": self.nl,
                     "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4),
@@ -431,13 +433,13 @@ class OracleResultTestClass(TestClass):
         return outputs
 
 class NLRelaxTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, num=10):
-        super().__init__("Natural Language Relexing Test Class", nl, hint, sql, db_id, db_root_path, num)
-        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", db_id, hashing(db_id, nl, sql))
+    def __init__(self, **kwargs):
+        super().__init__("Natural Language Relexing Test Class", **kwargs)
+        self.backbone = LLM(model_name=self.backbone_llm_model_name)
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", self.db_id, hashing(self.db_id, self.nl, self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.test_cases = self._generator()
         
     def set_settings(self, **kwargs):
@@ -533,7 +535,7 @@ class NLRelaxTestClass(TestClass):
                     invalid_queries_string=__error_to_string(invalids) if invalids else None,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.GPT4o(prompt, parser, 
+                response = self.backbone(prompt, parser, 
                     request_kwargs={
                         "HINT": self.hint,
                         "QUESTION": self.nl,
@@ -555,13 +557,13 @@ class NLRelaxTestClass(TestClass):
         return outputs
 
 class NLStrengthenTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, num=10):
-        super().__init__("Natural Language Strengthening Test Class", nl, hint, sql, db_id, db_root_path, num)
-        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", db_id, hashing(nl, sql))
+    def __init__(self, **kwargs):
+        super().__init__("Natural Language Strengthening Test Class", **kwargs)
+        self.backbone = LLM(model_name=self.backbone_llm_model_name)
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", self.db_id, hashing(self.nl, self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.test_cases = self._generator()
         
     def set_settings(self, **kwargs):
@@ -651,7 +653,7 @@ class NLStrengthenTestClass(TestClass):
                     invalid_queries_string=__error_to_string(invalids) if invalids else None,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.GPT4o(prompt, parser, 
+                response = self.backbone(prompt, parser, 
                     request_kwargs={
                         "HINT": self.hint,
                         "QUESTION": self.nl,
@@ -775,20 +777,20 @@ class CrossModelTestClass(TestClass):
         return outputs
 
 class SelfConsistencyTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, model=None, num=10):
-        super().__init__("Query Consistency Test Class", nl, hint, sql, db_id, db_root_path, num)
+    def __init__(self, model=None, **kwargs):
+        super().__init__("Query Consistency Test Class", **kwargs)
         if model is None:
             raise(Exception('No model provided. Please specify your NL2SQL model first ...'))
         self.model = model
-        self.GPT4o = LLM(model_name="gpt-4o-mini-0708")
+        self.backbone = LLM(model_name=self.backbone_llm_model_name)
         
         self.instance_saved_path = os.path.join(
             TEST_INSTANCE_ROOT_PATH, 
             "differential", "query_consistency", db_id, hashing(db_id, nl=nl, sql=sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema()
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
+        schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema()
         schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(
@@ -866,7 +868,7 @@ class SelfConsistencyTestClass(TestClass):
                     template_name="nl_mutation_generation",
                     history_string=__history_to_string(history) if history else None
                 )
-                nl_mutant = self.GPT4o(prompt, parser, request_kwargs={
+                nl_mutant = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl
                     }
@@ -893,17 +895,17 @@ class SelfConsistencyTestClass(TestClass):
         return outputs
 
 class QueryReviewTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path):
-        super().__init__("Step-through Query Review Test Class", nl, hint, sql, db_id, db_root_path)
-        self.GPT4o = ModelFactory.create(
+    def __init__(self, **kwargs):
+        super().__init__("Step-through Query Review Test Class", **kwargs)
+        self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", db_id, hashing(db_id, nl=nl, sql=sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", self.db_id, hashing(self.db_id, nl=self.nl, sql=self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
@@ -977,9 +979,9 @@ class QueryReviewTestClass(TestClass):
             # )
             role_play_session = RolePlaying(
                 assistant_role_name="SQL Developer",
-                assistant_agent_kwargs=dict(model=self.GPT4o),
+                assistant_agent_kwargs=dict(model=self.backbone),
                 user_role_name="Rubber Duck Debugging Assistant",
-                user_agent_kwargs=dict(model=self.GPT4o),
+                user_agent_kwargs=dict(model=self.backbone),
                 task_prompt=task_prompt,
                 with_task_specify=False,
                 #   task_specify_agent_kwargs=dict(model=model),
@@ -1010,7 +1012,8 @@ class QueryReviewTestClass(TestClass):
                 if user_response.terminated:
                     print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
                     break
-
+                
+                # Disable printing animation as it really slows down the test
                 # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
                 # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
                 
@@ -1025,18 +1028,18 @@ class QueryReviewTestClass(TestClass):
         return outputs
 
 class NLReviewTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path):
-        super().__init__("Step-through Natural Language Review Test Class", nl, hint, sql, db_id, db_root_path)
-        self.GPT4o = ModelFactory.create(
+    def __init__(self, **kwargs):
+        super().__init__("Step-through Natural Language Review Test Class", **kwargs)
+        self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )
         
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "nl_review", db_id, hashing(db_id, nl=nl, sql=sql))
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "nl_review", self.db_id, hashing(self.db_id, nl=self.nl, sql=self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.b_id}.sqlite")
         schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
@@ -1108,9 +1111,9 @@ class NLReviewTestClass(TestClass):
         # )
         role_play_session = RolePlaying(
             assistant_role_name="SQL Developer",
-            assistant_agent_kwargs=dict(model=self.GPT4o),
+            assistant_agent_kwargs=dict(model=self.backbone),
             user_role_name="Rubber Duck Debugging Assistant",
-            user_agent_kwargs=dict(model=self.GPT4o),
+            user_agent_kwargs=dict(model=self.backbone),
             task_prompt=task_prompt,
             with_task_specify=False,
             #   task_specify_agent_kwargs=dict(model=model),
