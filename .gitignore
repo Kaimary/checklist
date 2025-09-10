@@ -10,6 +10,8 @@ build
 venv/
 data/
 test_cases/
+logs/
 .env
 run_test.py
 camel_test.py
+extract_chess_results.py
