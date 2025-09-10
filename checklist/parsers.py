@@ -106,7 +106,12 @@ class OracleDataGenerationOutput(BaseModel):
     chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
     database_instances: Dict[str, Any] = Field(description="The generated data instances based on the database schema")
     resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
-    
+
+class OracleDataVerificationOutput(BaseModel):
+    """Model for oracle data verification output."""
+    chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
+    resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
+
 class OracleResultCheckingOutput(BaseModel):
     """Model for oracle result checking output."""
     resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
@@ -118,6 +123,10 @@ class QueryRelaxingOutput(BaseModel):
     description: str = Field(description="Brief description of the relaxing operation")
     nl_mutant: str = Field(description="the natural language mutant transformed from the orignal natural language after applying the relaxing")
     sql_mutant: str = Field(description="the query mutant transformed from the orignal SQL after applying the relaxing")
+
+class SchemaPruningParser(BaseModel):
+    """Model for schema pruning output."""
+    pruned_schema: str = Field(description="The pruned database schema with only the necessary tables and columns.")
 
 class LLMJudgmentOutput(BaseModel):
     """Model for LLM judgment output."""
@@ -147,11 +156,13 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "nl2sql_translation": MarkDownOutputParser,
         "revision": lambda: JsonOutputParser(pydantic_object=SQLRevisionOutput),
         "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
+        "oracle_data_verification": lambda: JsonOutputParser(pydantic_object=OracleDataVerificationOutput),
         "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
         "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_mutation_generation": MarkDownOutputParser,
         "llm_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMJudgmentOutput),
+        "schema_pruning": lambda: JsonOutputParser(pydantic_object=SchemaPruningParser),
     }
 
     if parser_name not in parser_configs:

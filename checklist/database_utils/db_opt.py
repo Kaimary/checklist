@@ -51,3 +51,26 @@ def insert_rows_into_table(db_path, table_name, rows):
         print(f"SQLite error: {e}")
     finally:
         conn.close()
+
+def create_sqlite_database(db_path, schema_string):
+    """
+    Create an SQLite database with the given schema.
+
+    Parameters:
+        db_path (str): Path to the SQLite database file to create.
+        schema_string (str): SQL schema string to define the database structure.
+    """
+    if os.path.exists(db_path):
+        os.remove(db_path)  # Remove existing database file
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    schema_string = schema_string.replace('--', '') # Remove comments to avoid execution issues
+    try:
+        cursor.executescript(schema_string)
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"SQLite error: {e}")
+    finally:
+        conn.close()

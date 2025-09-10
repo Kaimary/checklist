@@ -1,4 +1,4 @@
-import copy
+import copy, logging
 import os, re, json, hashlib, random
 import numpy as np
 from pathlib import Path
@@ -12,6 +12,7 @@ from camel.models import ModelFactory
 from camel.configs import ChatGPTConfig
 from camel.types import ModelPlatformType, ModelType
 
+from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.red.parser.report import BugLevel
 from checklist.red.parser.schema import Schema
 from checklist.red.parser.red_parser import Query
@@ -20,7 +21,7 @@ from checklist.llm import CONFIGS, LLM
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.database_manager import DatabaseManager
-from checklist.database_utils.db_opt import duplicate_sqlite_database, insert_rows_into_table
+from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
 from checklist.database_utils.db_info import get_db_schema_from_json, load_schema_with_examples
@@ -184,11 +185,24 @@ class OracleResultTestClass(TestClass):
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
         self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
+        self.schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
+        self.schema_pruned = False
+        if any(len(cols) > 30 for cols in self.schema.values()):
+            logging.warning(f"Database {db_id} has tables with more than 20 columns. Truncating for schema ...")
+            parser = get_parser(parser_name="schema_pruning")
+            prompt = get_prompt(template_name="schema_pruning")
+            response = self.GPT4o(prompt, parser, request_kwargs={
+                "HINT": self.hint, 
+                "QUESTION": self.nl,
+                "DATABASE_SCHEMA": json.dumps(self.schema, indent=4)
+                }
+            )
+            self.schema = response
+            self.schema_pruned = True
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
+            tentative_schema=self.schema,
             schema_with_examples=None, # type: ignore
             schema_with_descriptions=schema_with_descriptions,
             include_value_description=True
@@ -205,15 +219,18 @@ class OracleResultTestClass(TestClass):
             for key, value in raw_golds.items()
         }
         golds = list(zip(*normalized.values()))
-        if set(preds) == set(golds):
+        if preds and set(preds) == set(golds):
             return True
         return False
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         # ret.description = "Test the original SQL over a faked database with expected execution results"
-        ret.results.pred = execute_sql(ret.test_fixtures.db, self.sql)
+        res = validate_sql_query(ret.test_fixtures.db, self.sql)
+        logging.info(f"Validating SQL: {self.sql}\nResult: {res}")
+        ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
         ret.results.target = ret.test_fixtures.label_result
+        logging.info(f"Predicted Result: {ret.results.pred}\nTarget Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
@@ -224,6 +241,25 @@ class OracleResultTestClass(TestClass):
         Parameters
         ----------
         """
+        def __extract_column_types_from_schema_string(schema_string):
+            res = {}
+            ddl_regex = re.compile(r"CREATE TABLE.*?\);", re.DOTALL | re.IGNORECASE)
+            ddl_commands = ddl_regex.findall(schema_string)
+            for ddl_command in ddl_commands:
+                create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+                table_name = create_table_match.group(1).strip()
+                column_definitions = create_table_match.group(2).strip()
+                definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
+                type_regex = re.compile(r'.*\b(TEXT|INTEGER|REAL|NUMERIC|BLOB|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
+                types = []
+                for column_def in definitions:
+                    column_def = column_def.strip()
+                    if 'foreign key' in column_def.lower(): continue
+                    match = type_regex.search(column_def)
+                    if match:
+                        types.append(match.group(1).upper())
+                res[table_name] = types
+            return res
         def __check_table_names(data, tables): return all(d in tables for d in data)
         def __check_data_types(data, tables):
             sqlite_type_map = {
@@ -236,9 +272,9 @@ class OracleResultTestClass(TestClass):
             }
             for t, rows in data.items():
                 if not rows: continue
-                print(f"table: {t}: {len(tables[t])}")
-                print(f"rows: {len(rows[0])}")
-                if len(tables[t]) != len(rows[0]): return False
+                if len(tables[t]) != len(rows[0]):
+                    logging.error(f"Table {t} Column number (schema({len(tables[t])}), data({len(rows[0])})) mismatch!")
+                    return False
                 
                 column_types = tables[t]
                 for v, t in zip(rows[0], column_types):
@@ -292,12 +328,12 @@ class OracleResultTestClass(TestClass):
             print(f"Check required keys failed ...")
             return False
         # Check table names exist
-        table_names = DatabaseManager().get_db_all_tables()
+        table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
         if not __check_table_names(response["database_instances"].keys(), table_names): 
             print(f"Check table names failed ...")
             return False
         # Check data types consistent
-        column_types= DatabaseManager().get_all_column_types()
+        column_types= DatabaseManager().get_all_column_types() if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
         if not __check_data_types(response["database_instances"], column_types): 
             print(f"Check data types consistent failed ...")
             return False
@@ -332,7 +368,11 @@ class OracleResultTestClass(TestClass):
         
         # Create test data test_cases
         ret.test_fixtures.db = os.path.join(TEST_INSTANCE_ROOT_PATH, f"{self.db_id}.sqlite")
-        duplicate_sqlite_database(self.db_path, ret.test_fixtures.db, reset=True)
+        logging.info(f"Creating test database at \"{ret.test_fixtures.db}\" ...")
+        if not self.schema_pruned:
+            duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db, reset=True)
+        else:
+            create_sqlite_database(ret.test_fixtures.db, self.schema_string)
         for t, rows in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
         # test case serialization
         self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
@@ -350,6 +390,7 @@ class OracleResultTestClass(TestClass):
             )
 
         parser = get_parser(parser_name="oracle_data_generation")
+        parser2 = get_parser(parser_name="oracle_data_verification")
         history, outputs = [], []
         
         spinner = Spinner(f"Generating Test Case `{self.name}` test test_cases ...")
@@ -363,15 +404,27 @@ class OracleResultTestClass(TestClass):
                     history_string=__history_to_string(history) if history else None
                 )
                 response = self.GPT4o(prompt, parser, request_kwargs={
-                    "HINT": self.hint, 
+                    "HINT": self.hint,
                     "QUESTION": self.nl
                     }
                 )
                 if not self._validate_test_fixture(response, history): 
                     if verbose: spinner.set_message(f"Generated test fixture validation failed! Retry...")
                     continue
+                prompt2 = get_prompt(
+                    template_name="oracle_data_verification", 
+                    schema_string=self.schema_string
+                )
+                response2 = self.GPT4o(prompt2, parser2, request_kwargs={
+                    "HINT": self.hint,
+                    "QUESTION": self.nl,
+                    "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4),
+                    "EXECUTED_RESULT": json.dumps(response["resulting_data"], indent=4)
+                    }
+                )
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response["resulting_data"]
+                logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test test_cases ...")
@@ -958,8 +1011,8 @@ class QueryReviewTestClass(TestClass):
                     print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
                     break
 
-                print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-                print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+                # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+                # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
                 
                 parsed_response = json.loads(assistant_response.msg.content.strip())
                 if "CAMEL_TASK_DONE" in user_response.msg.content: break

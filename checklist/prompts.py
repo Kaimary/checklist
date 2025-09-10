@@ -61,6 +61,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "nl2sql_translation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "revision": {"input_variables": ["SQL", "QUESTION", "MISSING_ENTITIES", "EVIDENCE", "QUERY_RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "oracle_data_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "HISTORY": kwargs.get("history_string", "")}},
+        "oracle_data_verification": {"input_variables": ["HINT", "QUESTION", "DATABASE_INSTANCES", "EXECUTED_RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "oracle_result_checking": {"input_variables": ["HINT", "QUESTION", "INSTANCES", "RESULT1", "RESULT2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "nl_relaxing_generation": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"HISTORY": kwargs.get("history_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
         "nl_strengthening_generation": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"HISTORY": kwargs.get("history_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
@@ -68,6 +69,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "query_rubber_duck_debugging": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "nl_rubber_duck_debugging": {"input_variables": ["QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "llm_nl2sql_judgment": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
+        "schema_pruning": {"input_variables": ["HINT", "QUESTION", "DATABASE_SCHEMA"]}
     }
 
     if template_name not in template_configs:

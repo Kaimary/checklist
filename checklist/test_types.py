@@ -68,6 +68,7 @@ class SEM(AbstractTest):
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
         self.schema_file_path = kwargs.get("schema_file_path", None)
+        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
             SemanticCheckTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, self.schema_file_path)
         ]
@@ -100,7 +101,7 @@ class ORC(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            OracleResultTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=5)
+            OracleResultTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3)
         ]
 
 class MTP(AbstractTest):
@@ -124,15 +125,16 @@ class MTP(AbstractTest):
                          templates=templates, print_first=True, name=name,
                          capability=capability, description=description)
     
-    def set(self, nl, hint, sql, db_id, db_root_path, pred_match_gold=None):
-        self.nl = nl
-        self.sql = sql
-        self.db_id = db_id
-        self.db_root_path = db_root_path
-        self.pred_match_gold = pred_match_gold
+    def set(self, **kwargs):
+        self.nl = kwargs.get("nl", None)
+        self.hint = kwargs.get("hint", None)
+        self.pred = kwargs.get("pred", None)
+        self.db_id = kwargs.get("db_id", None)
+        self.db_root_path = kwargs.get("db_root_path", None)
+        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            NLRelaxTestClass(nl, hint, sql, db_id, db_root_path, num=3),
-            NLStrengthenTestClass(nl, hint, sql, db_id, db_root_path, num=3)
+            NLRelaxTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3),
+            NLStrengthenTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3)
         ]
         
 class DIF(AbstractTest):
@@ -156,15 +158,16 @@ class DIF(AbstractTest):
                          templates=templates, print_first=True, name=name,
                          capability=capability, description=description)
 
-    def set(self, nl, hint, sql, db_id, db_root_path, pred_match_gold=None):
-        self.nl = nl
-        self.sql = sql
-        self.db_id = db_id
-        self.db_root_path = db_root_path
-        self.pred_match_gold=pred_match_gold
+    def set(self, **kwargs):
+        self.nl = kwargs.get("nl", None)
+        self.hint = kwargs.get("hint", None)
+        self.pred = kwargs.get("pred", None)
+        self.db_id = kwargs.get("db_id", None)
+        self.db_root_path = kwargs.get("db_root_path", None)
+        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            CrossModelTestClass(nl, hint, sql, db_id, db_root_path, num=3),
-            SelfConsistencyTestClass(nl, hint, sql, db_id, db_root_path, num=3, model=LLM(model_name="gpt-4o-mini-0708"))
+            CrossModelTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3),
+            SelfConsistencyTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path, num=3, model=LLM(model_name="gpt-4o-mini-0708"))
         ]
 
 class EXP(AbstractTest):
@@ -188,16 +191,14 @@ class EXP(AbstractTest):
                          templates=templates, print_first=True, name=name,
                          capability=capability, description=description)
         
-
-    def set(self, nl, hint, sql, db_id, db_root_path, schema_file_path, pred_match_gold=None):
-        self.nl = nl
-        self.hint = hint
-        self.sql = sql
-        self.db_id = db_id
-        self.db_root_path = db_root_path
-        self.schema_file_path = schema_file_path
-        self.pred_match_gold = pred_match_gold
+    def set(self, **kwargs):
+        self.nl = kwargs.get("nl", None)
+        self.hint = kwargs.get("hint", None)
+        self.pred = kwargs.get("pred", None)
+        self.db_id = kwargs.get("db_id", None)
+        self.db_root_path = kwargs.get("db_root_path", None)
+        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_cases = [
-            QueryReviewTestClass(nl, hint, sql, db_id, db_root_path),
-            # NLReviewTestClass(nl, hint, sql, db_id, db_root_path)
+            QueryReviewTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path),
+            # NLReviewTestClass(self.nl, self.hint, self.pred, self.db_id, self.db_root_path)
         ]

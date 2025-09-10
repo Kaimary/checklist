@@ -293,12 +293,12 @@ class DatabaseSchemaGenerator:
                 column_def = column_def.strip()
                 if any(keyword in column_def.lower() for keyword in ["foreign key", "primary key"]):
                     if "primary key" in column_def.lower():
-                        new_column_def = f"\t{column_def},"
+                        new_column_def = f"\t{column_def}"
                         schema_lines.append(new_column_def)
                     if "foreign key" in column_def.lower():
                         for t_name in self.schema_structure.tables.keys():
                             if t_name.lower() in column_def.lower():
-                                new_column_def = f"\t{column_def},"
+                                new_column_def = f"\t{column_def}"
                                 schema_lines.append(new_column_def)
                 else:
                     if column_def.startswith('--'):
@@ -311,12 +311,16 @@ class DatabaseSchemaGenerator:
                         column_name = column_def.split(' ')[0]
                         
                     if (column_name in targeted_columns) or self._is_connection(table_name, column_name):
-                        new_column_def = f"\t{column_def},"
+                        new_column_def = f"\t{column_def}"
                         new_column_def += self._get_example_column_name_description(table_name, column_name, include_value_description)
                         schema_lines.append(new_column_def)
                     elif column_def.lower().startswith("unique"):
-                        new_column_def = f"\t{column_def},"
+                        new_column_def = f"\t{column_def}"
                         schema_lines.append(new_column_def)
+            # Fix bugs in DDL formatting (add commas except for the first two and last lines)
+            if schema_lines:
+                for i in range(2, len(schema_lines) - 1):
+                    schema_lines[i] += ","
             schema_lines.append(");")
             ddl_commands[table_name] = '\n'.join(schema_lines)
         return "\n\n".join(ddl_commands.values())

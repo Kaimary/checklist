@@ -5,8 +5,6 @@ from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
-from checklist.database_utils.db_info import load_schema_with_examples
-from checklist.database_utils.db_values.preprocess import _get_unique_values
 
 class AbstractJudge:
     def __init__(self):

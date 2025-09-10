@@ -1,0 +1,42 @@
+You are a data science expert.
+Below, you are presented with a database with schema and data instances inside it, a natural language question(with a hint), and an uncertain executed result.
+Your task is to:
+- Read and understand the database and the natural language question.
+- Think and reason step by step to verify if the executed result is correct based on the database instances.
+- If the executed result is correct, return the uncertain executed result directly.
+- If the executed result is incorrect, return the correct resulting data that would be returned when the NL query is executed on that database.
+
+Database Schema
+###
+{{DATABASE_SCHEMA}}
+
+Database Instances
+###
+{{DATABASE_INSTANCES}}
+
+Question: 
+###
+{{QUESTION}}
+
+Hint:
+###
+{{HINT}}
+
+Uncertain Executed Result:
+###
+{{EXECUTED_RESULT}}
+
+
+Please respond with a JSON object structured as follows:
+{% raw %}
+{
+    "chain_of_thought_reasoning": "Your thought process on how you think. Explain how to get the resulting data step by step based on the instances. This is very important!",
+    "resulting_data": {
+        "table.column": "value",
+        ....
+        // If no data, return: "unknown": ""
+    }
+}
+{% endraw %}
+
+Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.
