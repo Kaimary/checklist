@@ -12,6 +12,7 @@ from camel.models import ModelFactory
 from camel.configs import ChatGPTConfig
 from camel.types import ModelPlatformType, ModelType
 
+from checklist.database_utils.schema import DatabaseSchema
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.red.parser.report import BugLevel
 from checklist.red.parser.schema import Schema
@@ -40,6 +41,9 @@ def hashing(schema, nl=None, sql=None):
     hashing_str = hashlib.md5(combined.encode()).hexdigest()[:8]
     
     return hashing_str
+
+class ValidationError(Exception):
+    pass
 
 class TestClass(ABC):
     def __init__(self, name, nl, hint, sql, db_id, db_root_path, 
@@ -156,7 +160,7 @@ class SemanticCheckTestClass(TestClass):
     
     def _generator(self):
         bugs, outputs = [], []
-        spinner = Spinner(f"Generating Test Case `{self.name}` test instance ...")
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             ret = Munch()
             ret.test_fixtures = Munch()
@@ -178,7 +182,7 @@ class SemanticCheckTestClass(TestClass):
         return outputs
 
 class OracleResultTestClass(TestClass):
-    def __init__(self, prunned_threshold=30, **kwargs):
+    def __init__(self, prunned_threshold=20, **kwargs):
         super().__init__("Oracle Result Test Class", **kwargs)
         self.backbone = LLM(model_name=self.backbone_llm_model_name)
 
@@ -189,18 +193,28 @@ class OracleResultTestClass(TestClass):
         self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         self.schema_pruned = False
+        # Prune the `lenthy` schema first, to ensure the quality of generated data 
         if any(len(cols) > prunned_threshold for cols in self.schema.values()):
-            logging.warning(f"Database {self.db_id} has tables with more than 20 columns. Truncating for schema ...")
+            logging.warning(f"Database {self.db_id} has tables with more than {prunned_threshold} columns. Truncating the schema before generation ...")
+            history = [] # Append the error messages to avoid endless llm loop
             parser = get_parser(parser_name="schema_pruning")
-            prompt = get_prompt(template_name="schema_pruning")
-            response = self.backbone(prompt, parser, request_kwargs={
-                "HINT": self.hint, 
-                "QUESTION": self.nl,
-                "DATABASE_SCHEMA": json.dumps(self.schema, indent=4)
-                }
-            )
-            self.schema = response
-            self.schema_pruned = True
+            prompt = get_prompt(template_name="schema_pruning", history_string='\n'.join(history) if history else None)
+            while True:
+                response = self.backbone(prompt, parser, request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl,
+                    "DATABASE_SCHEMA": json.dumps(self.schema, indent=4)
+                    }
+                )
+                try:
+                    self._validate_pruned_schema(response)
+                    self.schema = response    
+                    self.schema_pruned = True
+                    break
+                except ValidationError as e:
+                    history.append(str(e).split('.')[-1])
+                    logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
+                
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(
@@ -237,6 +251,38 @@ class OracleResultTestClass(TestClass):
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
     
+    def _validate_pruned_schema(self, response):
+        schema_generator = DatabaseSchemaGenerator(
+            tentative_schema=DatabaseSchema.from_schema_dict(response), 
+            db_id=self.db_id,
+            db_path=self.db_path
+        )
+        ddl_commands = schema_generator._extract_create_ddl_commands()
+        for table_name, ddl_command in ddl_commands.items():
+            ddl_command = re.sub(r'\s+', ' ', ddl_command.strip())
+            create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+            table = create_table_match.group(1).strip()
+            if table != table_name:
+                logging.warning(f"Table name mismatch: {table} != {table_name}")
+            column_definitions = create_table_match.group(2).strip()
+            definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
+            for col in response[table_name]:
+                if all(col not in d for d in definitions):
+                    raise ValidationError(
+                        f"Pruned schema column name checking failed. "
+                        f"Invalid column (in table {table_name}) found in pruned schema: {col}"
+                    )
+            # extra add primary key columns if not included
+            for column_def in definitions:
+                column_def = column_def.strip()
+                if "primary key" in column_def.lower():
+                    column_name_match = re.match(r"`([^`]+)`|(\w+)", column_def)
+                    pk_column_name = (column_name_match.group(1) or column_name_match.group(2)).strip()
+                    if pk_column_name not in response[table_name]:
+                        # assuming the primary key column is the first column
+                        response[table_name].insert(0, pk_column_name)
+            return True                 
+
     def _validate_test_fixture(self, response, history):
         """Validate the correctness (check if the schema matches, and the types match) of the output from LLM
 
@@ -262,8 +308,25 @@ class OracleResultTestClass(TestClass):
                         types.append(match.group(1).upper())
                 res[table_name] = types
             return res
-        def __check_table_names(data, tables): return all(d in tables for d in data)
-        def __check_data_types(data, tables):
+        def __output_format_check(response):
+            if "database_instances" not in response.keys() or "resulting_data" not in response.keys(): 
+                raise ValidationError(
+                    f"Output format check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `database_instances`, `resulting_data`"
+                )
+            return True
+        def __schema_data_alignment_check(response, tables, column_types, schema):
+            # table name validity check
+            tables_in_data = response["database_instances"].keys()
+            for td in tables_in_data:
+                if td not in tables:
+                    raise ValidationError(
+                        f"Table name checking failed. "
+                        f"Non-existed table name found in generated data: {td} "
+                        f"Existing table names: {','.join(tables)}"
+                    )
+            # column count and data types consistent check
             sqlite_type_map = {
                 'INTEGER': int,
                 'REAL': float,
@@ -272,21 +335,28 @@ class OracleResultTestClass(TestClass):
                 'NUMERIC': float,
                 'DATE': str
             }
+            data = response["database_instances"]
             for t, rows in data.items():
                 if not rows: continue
-                if len(tables[t]) != len(rows[0]):
-                    logging.error(f"Table {t} Column number (schema({len(tables[t])}), data({len(rows[0])})) mismatch!")
-                    return False
+                if len(column_types[t]) != len(rows[0]):
+                    raise ValidationError(
+                        f"Schema-data column count mismatch. "
+                        f"Column count in data row: {len(rows[0])}(e.g., {rows[0]}), "
+                        f"Expected column count of table {t}: {len(column_types[t])}({','.join(schema[t])})"
+                    )
                 
-                column_types = tables[t]
-                for v, t in zip(rows[0], column_types):
-                    expected_type = sqlite_type_map[t]
+                for v, tp in zip(rows[0], column_types[t]):
+                    expected_type = sqlite_type_map[tp]
                     try:
                         expected_type(v)
                     except (ValueError, TypeError):
-                        return False
+                        raise ValidationError(
+                            f"Schema-data column type mismatch. "
+                            f"Column type Data : {len(rows[0])} "
+                            f"Expected column count of Table {t}: {len(tables[t])}"
+                        )
             return True
-        def __check_response_history_compatible(response, history):
+        def __response_history_compatible_check(response, history):
             def __dicts_equal___(d1, d2):
                 if d1.keys() != d2.keys():
                     return False
@@ -307,8 +377,13 @@ class OracleResultTestClass(TestClass):
             
             for h in history:
                 if not __dicts_equal___(response["database_instances"], h["data"]): continue
-                # Check whether result is the same or not if test_cases are same. If it is the case, drop it
-                if __dicts_equal___(response["resulting_data"], h["label_result"]): return False
+                # Check whether result is the same or not if test cases are same. If it is the case, drop it
+                if __dicts_equal___(response["resulting_data"], h["label_result"]): 
+                    raise ValidationError(
+                        f"Resulting data under same test case mismatch. "
+                        f"Previous resulting data: {h['label_result']} "
+                        f"Response resulting data: {response['resulting_data']}"
+                    )
                 # Otherwise, double check which `result` is the correct one
                 prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
                 parser = get_parser(parser_name="oracle_result_checking")
@@ -321,29 +396,18 @@ class OracleResultTestClass(TestClass):
                 })
                 # Modify the `result` according to the output (TODO further check its correctness?)
                 h['label_result'] = response["resulting_data"]
-                return False
-            
+                raise ValidationError(f"Duplicate response detected.")
             return True
         
-        # Check required keys exist
-        if "database_instances" not in response.keys() or "resulting_data" not in response.keys(): 
-            print(f"Check required keys failed ...")
-            return False
-        # Check table names exist
+        # output format check
+        __output_format_check(response)
+        # schema-data alignment check
         table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
-        if not __check_table_names(response["database_instances"].keys(), table_names): 
-            print(f"Check table names failed ...")
-            return False
-        # Check data types consistent
-        column_types= DatabaseManager().get_all_column_types() if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
-        if not __check_data_types(response["database_instances"], column_types): 
-            print(f"Check data types consistent failed ...")
-            return False
-        # Check if duplicate response generated
-        if not __check_response_history_compatible(response, history): 
-            print(f"Failed! Duplicate response detected ...")
-            return False
-        return True
+        column_types= DatabaseManager().get_all_column_types() \
+            if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
+        __schema_data_alignment_check(response, table_names, column_types, self.schema)
+        # response duplication check
+        __response_history_compatible_check(response, history)
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -395,7 +459,7 @@ class OracleResultTestClass(TestClass):
         parser2 = get_parser(parser_name="oracle_data_verification")
         history, outputs = [], []
         
-        spinner = Spinner(f"Generating Test Case `{self.name}` test test_cases ...")
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while(len(outputs) < self.num):
                 ret = Munch()
@@ -410,9 +474,9 @@ class OracleResultTestClass(TestClass):
                     "QUESTION": self.nl
                     }
                 )
-                if not self._validate_test_fixture(response, history): 
-                    if verbose: spinner.set_message(f"Generated test fixture validation failed! Retry...")
-                    continue
+                # if not self._validate_test_fixture(response, history): 
+                #     if verbose: spinner.set_message(f"Generated test fixture validation failed! Retry...")
+                #     continue
                 prompt2 = get_prompt(
                     template_name="oracle_data_verification", 
                     schema_string=self.schema_string
@@ -424,12 +488,19 @@ class OracleResultTestClass(TestClass):
                     "EXECUTED_RESULT": json.dumps(response["resulting_data"], indent=4)
                     }
                 )
+                response["resulting_data"] = response2["resulting_data"]
+                try:
+                    self._validate_test_fixture(response, history)
+                except ValidationError as e:
+                    logging.warning(f"Test fixture validation failed: {e}. Retrying...")
+                    if verbose: spinner.set_message(f"Test fixture validation failed! Retrying...")
+                    continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response["resulting_data"]
                 logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test test_cases ...")
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
 class NLRelaxTestClass(TestClass):
@@ -525,7 +596,7 @@ class NLRelaxTestClass(TestClass):
         history, outputs = [], []
         invalids = set()
         retry = 0
-        spinner = Spinner(f"Generating Test Case `{self.name}` test test_cases ...")
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num and retry < self.num * 2:
                 ret = Munch()
@@ -553,7 +624,7 @@ class NLRelaxTestClass(TestClass):
                 ret.test_fixtures.sql_mutant = response["sql_mutant"] 
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test test_cases ...")
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
 class NLStrengthenTestClass(TestClass):
@@ -643,7 +714,7 @@ class NLStrengthenTestClass(TestClass):
         history, outputs = [], []
         invalids = set()
         retry = 0
-        spinner = Spinner(f"Generating Test Case `{self.name}` test test_cases ...")
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num and retry < self.num * 2:
                 ret = Munch()
@@ -671,7 +742,7 @@ class NLStrengthenTestClass(TestClass):
                 ret.test_fixtures.sql_mutant = response["sql_mutant"] 
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test test_cases ...")
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
 class CrossModelTestClass(TestClass):
@@ -754,7 +825,7 @@ class CrossModelTestClass(TestClass):
         parser = get_parser(parser_name="nl2sql_translation")
         outputs = []
         retry = 0
-        spinner = Spinner(f"Generating Test Case `{self.name}` test test_cases ...")
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num and retry < self.num * 2:
                 candidates = []
@@ -773,7 +844,7 @@ class CrossModelTestClass(TestClass):
                     continue
                 ret.test_fixtures.candidates = candidates
                 outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test test_cases ...")
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
 class SelfConsistencyTestClass(TestClass):
@@ -786,7 +857,7 @@ class SelfConsistencyTestClass(TestClass):
         
         self.instance_saved_path = os.path.join(
             TEST_INSTANCE_ROOT_PATH, 
-            "differential", "query_consistency", db_id, hashing(db_id, nl=nl, sql=sql))
+            "differential", "query_consistency", self.db_id, hashing(self.db_id, nl=self.nl, sql=self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
         self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
@@ -859,7 +930,7 @@ class SelfConsistencyTestClass(TestClass):
         parser2 = get_parser(parser_name="nl2sql_translation")
         history, outputs = [], []
         retry = 0
-        spinner = Spinner(f"Generating Test Case `{self.name}` test test_cases ...")
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num and retry < self.num * 2:
                 ret = Munch()
@@ -891,7 +962,7 @@ class SelfConsistencyTestClass(TestClass):
                 ret.test_fixtures.predict_sql = pred
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test test_cases ...")
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
 class QueryReviewTestClass(TestClass):
@@ -906,7 +977,7 @@ class QueryReviewTestClass(TestClass):
         os.makedirs(self.instance_saved_path, exist_ok=True)
         
         self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
+        schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(

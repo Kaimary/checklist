@@ -122,10 +122,11 @@ class DatabaseSchemaGenerator:
         
         for table_name, table_schema in self.schema_structure.tables.items():
             for column_name, column_info in table_schema.columns.items():
-                if (self.add_examples and not column_info.examples) or ((column_info.type.lower()) == "date" or ("date" in column_name.lower())):
+                # Fix adding examples for `date`-type column even disabled (not sure if it's a bug in the original code)
+                if self.add_examples and (not column_info.examples or ((column_info.type.lower()) == "date" or ("date" in column_name.lower()))):
                     example = execute_sql(db_path=self.db_path, 
                                           sql=f"SELECT DISTINCT `{column_name}` FROM `{table_name}` WHERE `{column_name}` IS NOT NULL", 
-                                          fetch="random") 
+                                          fetch="random")
                     if example and len(str(example[0])) < 50:
                         column_info.examples = example
 
@@ -268,7 +269,7 @@ class DatabaseSchemaGenerator:
         joint_string = f" --{example_part}|{description_part}" if example_part and description_part else f" --{example_part or description_part}"
         return joint_string.replace("\n", " ") if joint_string else ""
 
-    def generate_schema_string(self, include_value_description: bool = False) -> str:
+    def generate_schema_string(self, include_value_description: bool) -> str:
         """
         Generates a schema string with descriptions and examples.
         

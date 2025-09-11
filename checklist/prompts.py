@@ -69,7 +69,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "query_rubber_duck_debugging": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "nl_rubber_duck_debugging": {"input_variables": ["QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "llm_nl2sql_judgment": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "schema_pruning": {"input_variables": ["HINT", "QUESTION", "DATABASE_SCHEMA"]}
+        "schema_pruning": {"input_variables": ["HINT", "QUESTION", "DATABASE_SCHEMA"], "partial_variables": {"HISTORY": kwargs.get("history_string", "")}}
     }
 
     if template_name not in template_configs:
