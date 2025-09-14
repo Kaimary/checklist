@@ -2,6 +2,8 @@ import collections
 from collections import defaultdict, OrderedDict
 import dill
 import json
+
+import numpy as np
 from .abstract_test import load_test, read_pred_file
 from .test_types import DIF, EXP, MFT, MTP, ORC, SEM
 
@@ -303,6 +305,15 @@ class TestSuite:
             res = t.run1(verbose=verbose, **kwargs)
             detection_results.append(res)
             ret[name] = res
+            ret[name + "_details"] = {
+                t.test_classes[idx].name: {
+                    "total": len(tc.passed),
+                    "passed": int(np.sum(tc.passed)),
+                    "criteria": tc.criteria,
+                    # "failed": int(len(t.result_indexes) - np.sum(t.passed))
+                }
+                for idx, tc in enumerate(t.results.test_classes)
+            }
         ret["judgment"] = all(detection_results)
 
         return ret

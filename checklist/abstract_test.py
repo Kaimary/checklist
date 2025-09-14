@@ -68,7 +68,7 @@ def read_pred_file(path, file_format=None, format_fn=None, ignore_header=False):
 class AbstractTest(ABC):
     def __init__(self, data, expect, labels=None, meta=None, agg_fn='all',
                  templates=None, print_first=None, name=None, capability=None,
-                 description=None, test_cases=[]):
+                 description=None, test_classes=[]):
         self.data = data
         self.expect = expect
         self.labels = labels
@@ -81,7 +81,7 @@ class AbstractTest(ABC):
         self.name = name
         self.capability = capability
         self.description = description
-        self.test_cases = test_cases
+        self.test_classes = test_classes
         
     def save(self, file):
         dill.dump(self, open(file, 'wb'), recurse=True)
@@ -381,12 +381,12 @@ class AbstractTest(ABC):
         self._check_create_results(overwrite=True, check_only=False)
 
         if verbose:
-            print(Fore.BLUE + 'Running %d test cases' % len(self.test_cases) + Style.RESET_ALL)
-        self.results.test_cases = [
-            Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr)
-            for pd, fs, rs, dr in (ut.run() for ut in self.test_cases)
+            print(Fore.BLUE + 'Running %d test classes' % len(self.test_classes) + Style.RESET_ALL)
+        self.results.test_classes = [
+            Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr, criteria=ctr)
+            for pd, fs, rs, dr, ctr in (ut.run() for ut in self.test_classes)
         ]
-        return all(ut.detection_result == True for ut in self.results.test_cases)
+        return all(ut.detection_result == True for ut in self.results.test_classes)
         
     def fail_idxs(self):
         self._check_results()
@@ -394,7 +394,7 @@ class AbstractTest(ABC):
 
     def fail_idxs1(self, idx):
         self._check_results()
-        return np.where(self.results.test_cases[idx].passed == False)[0]
+        return np.where(self.results.test_classes[idx].passed == False)[0]
     
     def filtered_idxs(self):
         self._check_results()
@@ -402,7 +402,7 @@ class AbstractTest(ABC):
 
     def filtered_idxs1(self, idx):
         self._check_results()
-        return np.where(self.results.test_cases[idx].passed == None)[0]
+        return np.where(self.results.test_classes[idx].passed == None)[0]
     
     def get_stats(self):
         stats = Munch()
@@ -437,7 +437,7 @@ class AbstractTest(ABC):
     def get_stats1(self, idx):
         stats = Munch()
         self._check_results()
-        n_run = len(self.results.test_cases[idx].results.pred)
+        n_run = len(self.results.test_classes[idx].results.pred)
         fails = self.fail_idxs1(idx).shape[0]
         filtered = self.filtered_idxs1(idx).shape[0]
         nonfiltered = n_run - filtered
@@ -451,7 +451,7 @@ class AbstractTest(ABC):
         return stats
 
     def print_stats1(self, idx):
-        detection_result = self.results.test_cases[idx].detection_result
+        detection_result = self.results.test_classes[idx].detection_result
         stats = self.get_stats1(idx)
         print(Fore.BLUE + 'Test cases:       ' + Fore.GREEN + '%d' % stats.testcases + Style.RESET_ALL)
         print(Fore.BLUE + 'Detection result: ' + Fore.RED + '%s' % ("Correct" if detection_result else "Incorrect") + Style.RESET_ALL)
@@ -556,8 +556,8 @@ class AbstractTest(ABC):
         if format_example_fn is None:
             format_example_fn = default_format_example
 
-        for idx in range(len(self.test_cases)):
-            print(Fore.RED + '%s\n' % self.test_cases[idx].name + '-'*50 + '\n' + Style.RESET_ALL)
+        for idx in range(len(self.test_classes)):
+            print(Fore.RED + '%s\n' % self.test_classes[idx].name + '-'*50 + '\n' + Style.RESET_ALL)
 
             self.print_stats1(idx)
             fails = self.fail_idxs1(idx)
@@ -567,7 +567,7 @@ class AbstractTest(ABC):
             fails = np.random.choice(fails, min(fails.shape[0], n), replace=False)
             for f in fails:
                 d_idx = f if self.run_idxs is None else self.run_idxs[f]
-                print_fn(d_idx, self.results.test_cases[idx].test_fixtures, self.results.test_cases[idx].results, \
+                print_fn(d_idx, self.results.test_classes[idx].test_fixtures, self.results.test_classes[idx].results, \
                          format_example_fn, nsamples=n_per_testcase)
         
         print('*'*100)

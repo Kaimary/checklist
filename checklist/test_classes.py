@@ -60,6 +60,7 @@ class TestClass(ABC):
         self.criteria = criteria
 
         self.test_cases = []
+        self.max_retry = self.num * 2
         self.test_fn = self._test_fn
 
     @abstractmethod
@@ -82,7 +83,7 @@ class TestClass(ABC):
         return None
     
     def run(self):
-        """Run all generated test test_cases in this test case
+        """Run all generated test cases in this test case
         """
         passes = []
         fixtures, results = Munch(), Munch()
@@ -95,10 +96,11 @@ class TestClass(ABC):
             for k, v in result.items():
                 if k not in results: results[k] = []
                 results[k].append(v)
-        # Verify whether the number of passes for the test test_cases meets the test case criteria
+        # Verify whether the number of passed test cases meets the criteria
         detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
+        logging.info(f"Test Class `{self.name}` Total Test Cases: {len(passes)}, Passed: {np.sum(passes)}, Criteria: {self.criteria}")
 
-        return np.array(passes), fixtures, results, detection_result
+        return np.array(passes), fixtures, results, detection_result, self.criteria
 
 class SemanticCheckTestClass(TestClass):
     def __init__(self, schema_file_path, **kwargs):
@@ -223,6 +225,7 @@ class OracleResultTestClass(TestClass):
             schema_with_descriptions=schema_with_descriptions,
             include_value_description=True
         )
+        self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
         self.test_cases = self._generator()
                 
     def set_settings(self, **kwargs):
@@ -379,18 +382,14 @@ class OracleResultTestClass(TestClass):
                 if not __dicts_equal___(response["database_instances"], h["data"]): continue
                 # Check whether result is the same or not if test cases are same. If it is the case, drop it
                 if __dicts_equal___(response["resulting_data"], h["label_result"]): 
-                    raise ValidationError(
-                        f"Resulting data under same test case mismatch. "
-                        f"Previous resulting data: {h['label_result']} "
-                        f"Response resulting data: {response['resulting_data']}"
-                    )
+                    raise ValidationError("Duplicate test case.")
                 # Otherwise, double check which `result` is the correct one
                 prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
                 parser = get_parser(parser_name="oracle_result_checking")
                 response = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint,
                     "QUESTION": self.nl,
-                    "test_cases": json.dumps(h['data'], indent=4),
+                    "INSTANCES": json.dumps(h['data'], indent=4),
                     "RESULT1": json.dumps(h['label_result'], indent=4),
                     "RESULT2": json.dumps(response["resulting_data"], indent=4)
                 })
@@ -458,10 +457,10 @@ class OracleResultTestClass(TestClass):
         parser = get_parser(parser_name="oracle_data_generation")
         parser2 = get_parser(parser_name="oracle_data_verification")
         history, outputs = [], []
-        
+        retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
-            while(len(outputs) < self.num):
+            while(len(outputs) < self.num) and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 prompt = get_prompt(
@@ -474,9 +473,13 @@ class OracleResultTestClass(TestClass):
                     "QUESTION": self.nl
                     }
                 )
-                # if not self._validate_test_fixture(response, history): 
-                #     if verbose: spinner.set_message(f"Generated test fixture validation failed! Retry...")
-                #     continue
+                try: 
+                    self._validate_test_fixture(response, history)
+                except ValidationError as e: 
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                    retry += 1
+                    continue
                 prompt2 = get_prompt(
                     template_name="oracle_data_verification", 
                     schema_string=self.schema_string
@@ -492,8 +495,9 @@ class OracleResultTestClass(TestClass):
                 try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e:
-                    logging.warning(f"Test fixture validation failed: {e}. Retrying...")
-                    if verbose: spinner.set_message(f"Test fixture validation failed! Retrying...")
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                    retry += 1
                     continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response["resulting_data"]
@@ -505,7 +509,7 @@ class OracleResultTestClass(TestClass):
 
 class NLRelaxTestClass(TestClass):
     def __init__(self, **kwargs):
-        super().__init__("Natural Language Relexing Test Class", **kwargs)
+        super().__init__("Natural Language Relaxing Test Class", **kwargs)
         self.backbone = LLM(model_name=self.backbone_llm_model_name)
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", self.db_id, hashing(self.db_id, self.nl, self.sql))
         os.makedirs(self.instance_saved_path, exist_ok=True)
@@ -528,16 +532,23 @@ class NLRelaxTestClass(TestClass):
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
     
-    def _validate_test_fixture(self, response):
-        # def __check_response_history_compatible(response, history):
-        #     if any(h.nl_mutant == response["nl_mutant"] or h.sql_mutant == response["sql_mutant"] for h in history): return False
-        #     return True
-        
-        # Check if the mutanted SQL is valid
-        if validate_sql_query(self.db_path, response["sql_mutant"])["STATUS"] != "OK": return False
-        ## Check if duplicate response generated
-        # if not __check_response_history_compatible(response, history): return False
-        return True
+    def _validate_test_fixture(self, response, history):
+        def __response_history_compatible_check(response, history):
+            if any(h.nl_mutant == response["nl_mutant"] or h.sql_mutant == response["sql_mutant"] for h in history):
+                raise ValidationError(f"Duplicate response (nl/sql mutant) detected.")
+            return True
+        def __sql_executable_check(response, db_path):
+            res = validate_sql_query(db_path, response["sql_mutant"])
+            if res["STATUS"] != "OK":
+                raise ValidationError(
+                        f"SQL executable check failed. "
+                        f"Fail log from DBMS: {res['RESULT']}"
+                    )
+            return True
+        # mutanted SQL syntax check
+        __sql_executable_check(response, self.db_path)
+        # response duplication check
+        __response_history_compatible_check(response, history)
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -598,7 +609,7 @@ class NLRelaxTestClass(TestClass):
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
-            while len(outputs) < self.num and retry < self.num * 2:
+            while len(outputs) < self.num and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 prompt = get_prompt(
@@ -613,11 +624,15 @@ class NLRelaxTestClass(TestClass):
                         "QUERY": self.sql
                     }
                 )
-                if not self._validate_test_fixture(response):
-                    invalids.add(response["sql_mutant"])
+                try:
+                    self._validate_test_fixture(response, history)
+                except ValidationError as e:
                     retry += 1
-                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                    invalids.add(response["sql_mutant"])
                     continue
+                
                 ret.type = response["type"]
                 ret.desc = response["description"]
                 ret.test_fixtures.nl_mutant = response["nl_mutant"]
@@ -651,10 +666,23 @@ class NLStrengthenTestClass(TestClass):
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
     
-    
-    def _validate_test_fixture(self, response):
-        # Check if the mutanted SQL is valid
-        return validate_sql_query(self.db_path, response["sql_mutant"])["STATUS"] == "OK"
+    def _validate_test_fixture(self, response, history):
+        def __response_history_compatible_check(response, history):
+            if any(h.nl_mutant == response["nl_mutant"] or h.sql_mutant == response["sql_mutant"] for h in history):
+                raise ValidationError(f"Duplicate response (nl/sql mutant) detected.")
+            return True
+        def __sql_executable_check(response, db_path):
+            res = validate_sql_query(db_path, response["sql_mutant"])
+            if res["STATUS"] != "OK":
+                raise ValidationError(
+                        f"SQL executable check failed. "
+                        f"Fail log from DBMS: {res['RESULT']}"
+                    )
+            return True
+        # mutanted SQL syntax check
+        __sql_executable_check(response, self.db_path)
+        # response duplication check
+        __response_history_compatible_check(response, history)
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -703,7 +731,6 @@ class NLStrengthenTestClass(TestClass):
                 f"sql mutation: {h.sql_mutant}\n\n"
                 for i, h in enumerate(history)
             )
-
         def __error_to_string(invalids):
             return "\n".join(
                 f"sql mutation: {sql}\n\n"
@@ -716,7 +743,7 @@ class NLStrengthenTestClass(TestClass):
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
-            while len(outputs) < self.num and retry < self.num * 2:
+            while len(outputs) < self.num and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 prompt = get_prompt(
@@ -731,10 +758,13 @@ class NLStrengthenTestClass(TestClass):
                         "QUERY": self.sql
                     }
                 )
-                if not self._validate_test_fixture(response):
-                    invalids.add(response["sql_mutant"])
+                try:
+                    self._validate_test_fixture(response, history)
+                except ValidationError as e:
                     retry += 1
-                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                    invalids.add(response["sql_mutant"])
                     continue
                 ret.type = response["type"]
                 ret.desc = response["description"]
@@ -788,7 +818,8 @@ class CrossModelTestClass(TestClass):
         return passed, ret.test_fixtures, ret.results
     
     def _validate_test_fixture(self, candidates):
-        if len(candidates) < self.active_llm_num: return False
+        if len(candidates) < self.active_llm_num:
+            raise ValidationError(f"Not enough candidate SQLs generated: {len(candidates)}/{self.active_llm_num})")
         return True
     
     def write_test_fixture_file(self, output_dir, **kwargs):
@@ -827,7 +858,7 @@ class CrossModelTestClass(TestClass):
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
-            while len(outputs) < self.num and retry < self.num * 2:
+            while len(outputs) < self.num and retry < self.max_retry:
                 candidates = []
                 ret = Munch()
                 ret.test_fixtures = Munch()
@@ -838,9 +869,12 @@ class CrossModelTestClass(TestClass):
                         if validate_sql_query(self.db_path, candidate)["STATUS"] == "OK": break
                         one_retry += 1
                     if one_retry < 3: candidates.append(candidate)
-                if not self._validate_test_fixture(candidates):
+                try: 
+                    self._validate_test_fixture(candidates)
+                except ValidationError as e:
                     retry += 1
-                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     continue
                 ret.test_fixtures.candidates = candidates
                 outputs.append(self._form_instance(len(outputs), ret))
@@ -851,7 +885,7 @@ class SelfConsistencyTestClass(TestClass):
     def __init__(self, model=None, **kwargs):
         super().__init__("Query Consistency Test Class", **kwargs)
         if model is None:
-            raise(Exception('No model provided. Please specify your NL2SQL model first ...'))
+            raise(Exception('No model provided. Please specify your NL2SQL model first.'))
         self.model = model
         self.backbone = LLM(model_name=self.backbone_llm_model_name)
         
@@ -870,6 +904,7 @@ class SelfConsistencyTestClass(TestClass):
             schema_with_descriptions=schema_with_descriptions,
             include_value_description=True
         )
+        self.max_retry = self.num * 3
         self.test_cases = self._generator()
         
     def set_settings(self, **kwargs):
@@ -888,9 +923,22 @@ class SelfConsistencyTestClass(TestClass):
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
     
-    def _validate_test_fixture(self, nl_mutant, pred, history):
-        if any(h.nl_mutant == nl_mutant for h in history): return False
-        if validate_sql_query(self.db_path, pred)["STATUS"] != "OK": return False
+    def _validate_test_fixture(self, response, history, pred=None):
+        def __response_history_compatible_check(response, history):
+            if any(h.nl_mutant == response for h in history):
+                raise ValidationError(f"Duplicate response (nl mutant) detected.")
+            return True
+        def __sql_executable_check(pred, db_path):
+            res = validate_sql_query(db_path, pred)
+            if res["STATUS"] != "OK":
+                raise ValidationError(
+                        f"SQL executable check failed. "
+                        f"Fail log from DBMS: {res['RESULT']}"
+                    )
+            return True
+        __response_history_compatible_check(response, history)
+        # mutanted SQL syntax check
+        if pred is not None: __sql_executable_check(pred, self.db_path)
         return True
     
     def write_test_fixture_file(self, output_dir, **kwargs):
@@ -932,33 +980,39 @@ class SelfConsistencyTestClass(TestClass):
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
-            while len(outputs) < self.num and retry < self.num * 2:
+            while len(outputs) < self.num and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 prompt = get_prompt(
                     template_name="nl_mutation_generation",
                     history_string=__history_to_string(history) if history else None
                 )
-                nl_mutant = self.backbone(prompt, parser, request_kwargs={
+                response = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl
                     }
                 )["NL"]
-                if any(nl_mutant == h.nl_mutant for h in history):
+                try:
+                    self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
+                except ValidationError as e:
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
-                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
                     continue
                 # TODO change to be a unified interface that should be implemented for a given NL2SQL model
                 pred = self.model(prompt2, parser2, request_kwargs={
                     "HINT": self.hint,
-                    "QUESTION": nl_mutant
+                    "QUESTION": response
                     }
                 )["SQL"]
-                if not self._validate_test_fixture(nl_mutant, pred, history):
+                try:
+                    self._validate_test_fixture(response, history, pred=pred)
+                except ValidationError as e:
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")    
                     retry += 1
-                    if verbose: print(f"Generated test fixture validation failed! Retry#{retry} ...")
                     continue
-                ret.test_fixtures.nl_mutant = nl_mutant
+                ret.test_fixtures.nl_mutant = response
                 ret.test_fixtures.predict_sql = pred
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
