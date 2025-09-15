@@ -14,7 +14,7 @@ from checklist.red.parser.report import BugLevel
 from checklist.red.parser.schema import Schema
 from checklist.red.parser.red_parser import Query
 from checklist.database_manager import DatabaseManager
-from checklist.base_test_class import TestClass
+from checklist.base_test_class import TestClass, ValidationError
 from checklist.database_utils.schema import DatabaseSchema
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.models import CHESS, CSCSQL, DAILSQL, RESDSQL, GenericLLM
@@ -470,8 +470,8 @@ class NLRelaxTestClass(TestClass):
             )   
         def __error_to_string(invalids):
             return "\n".join(
-                f"sql mutation: {sql}\n\n"
-                for sql in invalids
+                f"invalid sql mutation {idx+1}:\n{invalid[0]}\nerror:{invalid[1]}"
+                for idx, invalid in enumerate(invalids)
             )
         
         parser = get_parser(parser_name="nl_relaxing_generation")
@@ -501,7 +501,7 @@ class NLRelaxTestClass(TestClass):
                     retry += 1
                     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    invalids.add(response["sql_mutant"])
+                    invalids.add((response["sql_mutant"], str(e)))
                     continue
                 
                 ret.type = response["type"]
@@ -664,9 +664,22 @@ class CrossModelTestClass(TestClass):
         return passed, ret.test_fixtures, ret.results
     
     def _validate_test_fixture(self, candidates):
-        if len(candidates) < self.active_model_num:
-            raise ValidationError(f"Not enough candidate SQLs generated: {len(candidates)}/{self.active_model_num})")
-        return True
+        def __sql_executable_check(candidate, db_path):
+            res = validate_sql_query(db_path, candidate)
+            if res["STATUS"] != "OK":
+                raise ValidationError(
+                        f"SQL executable check failed. "
+                        f"Fail log from DBMS: {res['RESULT']}"
+                    )
+            return True
+        def __candidate_number_check(candidates, active_model_num):
+            if len(candidates) < active_model_num:
+                raise ValidationError(f"Candidate number check failed. Expected {active_model_num} candidates, but got {len(candidates)}.")
+            return True
+        # mutanted SQL syntax check
+        if isinstance(candidates, str): __sql_executable_check(candidates, self.db_path)
+        # candidate number check
+        else: __candidate_number_check(candidates, self.active_model_num)
         
     def _form_instance(self, idx, ret):
         """
@@ -689,9 +702,15 @@ class CrossModelTestClass(TestClass):
         return ret
     
     def _generator(self, verbose=True):
+        def __error_to_string(invalids):
+            return "\n".join(
+                f"invalid sql {idx+1}:\n{invalid[0]}\nerror:{invalid[1]}"
+                for idx, invalid in enumerate(invalids)
+            )
         prompt = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser = get_parser(parser_name="nl2sql_translation")
         outputs = []
+        invalids = set()
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
@@ -703,6 +722,11 @@ class CrossModelTestClass(TestClass):
                     one_retry = 0
                     while True and one_retry < 3:
                         if isinstance(model, GenericLLM):
+                            prompt = get_prompt(
+                                template_name="nl2sql_translation",
+                                schema_string=self.schema_string,
+                                invalid_queries_string=__error_to_string(invalids) if invalids else None
+                            )
                             candidate = model(
                                 prompt=prompt, 
                                 parser=parser, 
@@ -710,10 +734,16 @@ class CrossModelTestClass(TestClass):
                             )
                         else:
                             candidate = model(nl=self.nl)
-                        if validate_sql_query(self.db_path, candidate)["STATUS"] == "OK": 
+                        try:
+                            self._validate_test_fixture(candidate)
                             break
-                        one_retry += 1
+                        except ValidationError as e:
+                            logging.warning(f"Candidate SQL validation failed: {e}")
+                            if verbose: spinner.set_message(f"Candidate SQL validation failed: {e} ...")
+                            invalids.add((candidate, str(e)))
+                            one_retry += 1
                     if one_retry < 3: candidates.append(candidate)
+                # validate after getting all candidates
                 try: 
                     self._validate_test_fixture(candidates)
                 except ValidationError as e:

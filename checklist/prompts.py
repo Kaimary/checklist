@@ -58,7 +58,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "table_selection": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "column_selection": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "candidate_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "nl2sql_translation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
+        "nl2sql_translation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
         "revision": {"input_variables": ["SQL", "QUESTION", "MISSING_ENTITIES", "EVIDENCE", "QUERY_RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "oracle_data_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "HISTORY": kwargs.get("history_string", "")}},
         "oracle_data_verification": {"input_variables": ["HINT", "QUESTION", "DATABASE_INSTANCES", "EXECUTED_RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},

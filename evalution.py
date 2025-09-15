@@ -34,18 +34,12 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
             ret['res'] = 1 if ex['label'] == True else 0
         judgment_label = True if ret['res'] == 1 else False
 
-        if judgment_label == judgment['judgment']:
-            Acc += 1
+        if judgment_label == judgment['judgment']: Acc += 1
 
-        if judgment['judgment'] and judgment_label == judgment['judgment']:
-            TP += 1
-        elif not judgment['judgment'] and judgment_label != judgment['judgment']:
-            FN += 1
-            print(f"False Negative Case {idx}:")
-        elif judgment['judgment'] and judgment_label != judgment['judgment']:
-            FP += 1
-        else:
-            TN += 1
+        if judgment['judgment'] and judgment_label == judgment['judgment']: TP += 1
+        elif not judgment['judgment'] and judgment_label != judgment['judgment']: FN += 1
+        elif judgment['judgment'] and judgment_label != judgment['judgment']: FP += 1
+        else: TN += 1
     
     print(f"Evaluation Results of `{judge_name}` on `{benchmark_name}{f'+{nl2sql_model_name}' if nl2sql_model_name else ''}`:")
     print(f"Total Accuracy: {Acc/len(judgments)}")

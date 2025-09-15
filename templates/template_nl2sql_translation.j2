@@ -16,4 +16,11 @@ Question:
 Hint:
 {{HINT}}
 
+{% if INVALIDS %}
+And here are some invalid SQL generated before:
+###
+{{INVALIDS}}
+DO NOT repeat generate those invalid queries anymore!
+{% endif %}
+
 Please respond with a SQL query between ```sql and ``` that answers the question.
