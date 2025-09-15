@@ -47,7 +47,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
         else:
             TN += 1
     
-    print(f"Evaluation Results of {judge_name} on {benchmark_name}{f'+{nl2sql_model_name}' if nl2sql_model_name else ''}:")
+    print(f"Evaluation Results of `{judge_name}` on `{benchmark_name}{f'+{nl2sql_model_name}' if nl2sql_model_name else ''}`:")
     print(f"Total Accuracy: {Acc/len(judgments)}")
     print(f"TP: {TP}, FN: {FN}, FP: {FP}, TN: {TN}")
     precision = TP / (TP + FP) if TP + FP > 0 else 0

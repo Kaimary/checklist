@@ -14,6 +14,7 @@ from camel.types import ModelPlatformType, ModelType
 
 from checklist.database_utils.schema import DatabaseSchema
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
+from checklist.models import CHESS, CSCSQL, DAILSQL, RESDSQL, GenericLLM
 from checklist.red.parser.report import BugLevel
 from checklist.red.parser.schema import Schema
 from checklist.red.parser.red_parser import Query
@@ -32,12 +33,14 @@ from checklist.database_utils.db_values.preprocess import _get_unique_values
 load_dotenv(override=True)
 TEST_INSTANCE_ROOT_PATH = Path(os.getenv("TEST_INSTANCE_ROOT_PATH"))
 
-def hashing(schema, nl=None, sql=None):
-    combined = schema
-    if nl is not None: combined += f";{nl}"
-    if sql is not None: 
+def hashing(**kwargs):
+    combined = ""
+    nl = kwargs.get("nl", None)
+    sql = kwargs.get("sql", None)
+    if nl is not None: combined += f"{nl}"
+    if sql is not None:
         normalized_sql = re.sub(r"\s+", " ", sql.strip().lower())
-        combined += f";{normalized_sql}"
+        combined += f";{normalized_sql}" if combined else f"{normalized_sql}"
     hashing_str = hashlib.md5(combined.encode()).hexdigest()[:8]
     
     return hashing_str
@@ -45,17 +48,43 @@ def hashing(schema, nl=None, sql=None):
 class ValidationError(Exception):
     pass
 
+class SchemaCache:
+    _cache = {}
+
+    @classmethod
+    def get_schema(cls, db_id, db_path, db_root_path):
+        if db_id not in cls._cache:
+            schema = DatabaseManager(db_id=db_id, db_root_path=db_root_path).get_db_schema()
+            # schema_with_examples = load_schema_with_examples(_get_unique_values(db_path))
+            schema_with_descriptions = load_tables_description(db_path, use_value_description=True)
+            cls._cache[db_id] = DatabaseManager().get_database_schema_string(
+                tentative_schema=schema,
+                schema_with_examples=None, #schema_with_examples,
+                schema_with_descriptions=schema_with_descriptions,
+                include_value_description=True
+            )
+        return cls._cache[db_id]
+
 class TestClass(ABC):
-    def __init__(self, name, nl, hint, sql, db_id, db_root_path, 
+    def __init__(self, name, abbrev_name, abbrev_type, nl, hint, sql, db_id, db_root_path, key="nl+sql",
                  backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0, use_cache=False):
         self.name = name
-        self.num = num
+
         self.nl=nl
         self.hint=hint
         self.sql=sql
+
         self.db_id=db_id
         self.db_root_path=db_root_path
-        self.backbone_llm_model_name = backbone_llm_model_name
+        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
+        self.schema_string = SchemaCache.get_schema(db_id, self.db_path, db_root_path)
+        
+        kwargs = {nl: self.nl if "nl" in key else None, sql: self.sql if "sql" in key else None}
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, abbrev_type, abbrev_name, self.db_id, hashing(**kwargs))
+        os.makedirs(self.instance_saved_path, exist_ok=True)
+
+        self.backbone = LLM(model_name=backbone_llm_model_name)
+        self.num = num
         self.use_cache=use_cache
         self.criteria = criteria
 
@@ -64,20 +93,22 @@ class TestClass(ABC):
         self.test_fn = self._test_fn
 
     @abstractmethod
-    def set_settings(self, **kwargs):
-        pass
-    
-    @abstractmethod
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        pass
-    
-    @abstractmethod
     def _test_fn(self, ret):
         pass
     
     @abstractmethod
     def _generator(self):
         pass
+    
+    def set_settings(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
+    def write_test_fixture_file(self, output_dir, **kwargs):
+        output_path = os.path.join(output_dir, 'meta.json')
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(kwargs, f, indent=2, ensure_ascii=False)
 
     def _load_cached_test_cases(self):
         return None
@@ -104,18 +135,10 @@ class TestClass(ABC):
 
 class SemanticCheckTestClass(TestClass):
     def __init__(self, schema_file_path, **kwargs):
-        super().__init__("Semantic Check Test Class", **kwargs)
+        super().__init__("Semantic Check Test Class", "semantic_check", "semantic", key="sql", **kwargs)
 
-        self.instance_saved_path = os.path.join(
-            TEST_INSTANCE_ROOT_PATH, "semantic", "semantic_check", self.db_id, hashing(self.db_id, sql=self.sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-        
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
-
-    def set_settings(self, **kwargs):
-        self.criteria = kwargs.get("criteria", 1.0)
 
     def _compare_query_results(self, pred):
         if pred: return False
@@ -185,14 +208,8 @@ class SemanticCheckTestClass(TestClass):
 
 class OracleResultTestClass(TestClass):
     def __init__(self, prunned_threshold=20, **kwargs):
-        super().__init__("Oracle Result Test Class", **kwargs)
-        self.backbone = LLM(model_name=self.backbone_llm_model_name)
+        super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl", **kwargs)
 
-        self.instance_saved_path = os.path.join(
-            TEST_INSTANCE_ROOT_PATH, "oracle", "oracle_result", self.db_id, hashing(self.db_id, nl=self.nl))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         self.schema_pruned = False
         # Prune the `lenthy` schema first, to ensure the quality of generated data 
@@ -216,7 +233,7 @@ class OracleResultTestClass(TestClass):
                 except ValidationError as e:
                     history.append(str(e).split('.')[-1])
                     logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
-                
+
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(
@@ -227,10 +244,6 @@ class OracleResultTestClass(TestClass):
         )
         self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
         self.test_cases = self._generator()
-                
-    def set_settings(self, **kwargs):
-        self.num = kwargs.get("num", self.num)
-        self.criteria = kwargs.get("criteria", 1.0)
 
     def _compare_query_results(self, preds, raw_golds):
         normalized = {
@@ -407,17 +420,7 @@ class OracleResultTestClass(TestClass):
         __schema_data_alignment_check(response, table_names, column_types, self.schema)
         # response duplication check
         __response_history_compatible_check(response, history)
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "database": kwargs.get("database"),
-            "sql": kwargs.get("sql"),
-            "expect": kwargs.get("expect")
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        
+       
     def _form_instance(self, idx, ret):
         """
         Form each single test case, and save related test fixture for serialization. 
@@ -509,17 +512,9 @@ class OracleResultTestClass(TestClass):
 
 class NLRelaxTestClass(TestClass):
     def __init__(self, **kwargs):
-        super().__init__("Natural Language Relaxing Test Class", **kwargs)
-        self.backbone = LLM(model_name=self.backbone_llm_model_name)
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_relax", self.db_id, hashing(self.db_id, self.nl, self.sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
+        super().__init__("Natural Language Relaxing Test Class", "nl_relax", "metamorphic", **kwargs)
         self.test_cases = self._generator()
-        
-    def set_settings(self, **kwargs):
-        self.num = kwargs.get("num")
-    
+
     def _compare_query_results(self, orgin, mutant):
         return len(orgin) <= len(mutant)
     
@@ -549,21 +544,7 @@ class NLRelaxTestClass(TestClass):
         __sql_executable_check(response, self.db_path)
         # response duplication check
         __response_history_compatible_check(response, history)
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "type": kwargs.get("type"),
-            "description": kwargs.get("desc"),
-            "database": kwargs.get("database"),
-            "nl": kwargs.get("nl"),
-            "sql": kwargs.get("sql"),
-            "nl_mutant": kwargs.get("nl_mutant"),
-            "sql_mutant": kwargs.get("sql_mutant")
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        
+       
     def _form_instance(self, idx, ret):
         """
         Form each single test case, and save related test fixture for serialization. 
@@ -644,17 +625,9 @@ class NLRelaxTestClass(TestClass):
 
 class NLStrengthenTestClass(TestClass):
     def __init__(self, **kwargs):
-        super().__init__("Natural Language Strengthening Test Class", **kwargs)
-        self.backbone = LLM(model_name=self.backbone_llm_model_name)
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "metamorphic", "nl_strengthen", self.db_id, hashing(self.nl, self.sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-        
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
+        super().__init__("Natural Language Strengthening Test Class", "nl_strengthen", "metamorphic", **kwargs)
         self.test_cases = self._generator()
-        
-    def set_settings(self, **kwargs):
-        self.num = kwargs.get("num")
-    
+
     def _compare_query_results(self, orgin, mutant):
         return len(orgin) >= len(mutant)
     
@@ -683,20 +656,6 @@ class NLStrengthenTestClass(TestClass):
         __sql_executable_check(response, self.db_path)
         # response duplication check
         __response_history_compatible_check(response, history)
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "type": kwargs.get("type"),
-            "description": kwargs.get("desc"),
-            "database": kwargs.get("database"),
-            "nl": kwargs.get("nl"),
-            "sql": kwargs.get("sql"),
-            "nl_mutant": kwargs.get("nl_mutant"),
-            "sql_mutant": kwargs.get("sql_mutant")
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
         
     def _form_instance(self, idx, ret):
         """
@@ -776,31 +735,28 @@ class NLStrengthenTestClass(TestClass):
         return outputs
 
 class CrossModelTestClass(TestClass):
-    def __init__(self, nl, hint, sql, db_id, db_root_path, num=3, active_llm_num=3):
-        super().__init__("Majority Voting Test Class", nl, hint, sql, db_id, db_root_path, num)
-        self.active_llm_num = active_llm_num
-        self.llm_pool = self._create_llm_pool()
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "differential", "majority_vote", db_id, hashing(db_id, nl=nl, sql=sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-        
-        self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
-        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=schema_with_examples,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
+    def __init__(self, model_list=["cscsql", "chess", "gpt-4o-mini-0708"], active_model_num=3, **kwargs):
+        super().__init__("Majority Voting Test Class", "majority_vote", "differential", **kwargs)
+        self.active_model_num = active_model_num
+        self.model_pool = self._create_nl2sql_model_pool(model_list)
         self.test_cases = self._generator()
 
-    def set_settings(self, **kwargs):
-        self.num = kwargs.get("num")
-        self.active_llm_num = kwargs.get("active_llm_num")
-
-    def _create_llm_pool(self):
-        return [LLM(model_name=name) for name in list(CONFIGS.keys())]
+    def _create_nl2sql_model_pool(self, model_list):
+        MODEL_CLASS_MAP = {
+            "cscsql": CSCSQL,
+            "chess": CHESS,
+            "resdsql": RESDSQL,
+            "dailsql": DAILSQL
+        }
+        models = []
+        for name in model_list:
+            if name in MODEL_CLASS_MAP:
+                models.append(MODEL_CLASS_MAP[name]())
+            elif name.startswith("llm:"):
+                # e.g. "llm:gpt-4o-mini-0708"
+                _, model_name = name.split(":", 1)
+                models.append(GenericLLM(model_name=model_name))
+        return models
     
     def _compare_query_results(self, pred_list, origin):
         vote = 0
@@ -818,18 +774,9 @@ class CrossModelTestClass(TestClass):
         return passed, ret.test_fixtures, ret.results
     
     def _validate_test_fixture(self, candidates):
-        if len(candidates) < self.active_llm_num:
-            raise ValidationError(f"Not enough candidate SQLs generated: {len(candidates)}/{self.active_llm_num})")
+        if len(candidates) < self.active_model_num:
+            raise ValidationError(f"Not enough candidate SQLs generated: {len(candidates)}/{self.active_model_num})")
         return True
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "candidates": kwargs.get("candidates"),
-            "sql": kwargs.get("sql")
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
         
     def _form_instance(self, idx, ret):
         """
@@ -862,11 +809,19 @@ class CrossModelTestClass(TestClass):
                 candidates = []
                 ret = Munch()
                 ret.test_fixtures = Munch()
-                for model in random.sample(self.llm_pool, self.active_llm_num):
+                for model in random.sample(self.model_pool, self.active_model_num):
                     one_retry = 0
                     while True and one_retry < 3:
-                        candidate = model(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})["SQL"]
-                        if validate_sql_query(self.db_path, candidate)["STATUS"] == "OK": break
+                        if isinstance(model, GenericLLM):
+                            candidate = model(
+                                prompt=prompt, 
+                                parser=parser, 
+                                request_kwargs={"HINT": self.hint, "QUESTION": self.nl}
+                            )
+                        else:
+                            candidate = model(nl=self.nl)
+                        if validate_sql_query(self.db_path, candidate)["STATUS"] == "OK": 
+                            break
                         one_retry += 1
                     if one_retry < 3: candidates.append(candidate)
                 try: 
@@ -883,33 +838,14 @@ class CrossModelTestClass(TestClass):
 
 class SelfConsistencyTestClass(TestClass):
     def __init__(self, model=None, **kwargs):
-        super().__init__("Query Consistency Test Class", **kwargs)
+        super().__init__("Query Consistency Test Class", "query_consistency", "differential", **kwargs)
         if model is None:
             raise(Exception('No model provided. Please specify your NL2SQL model first.'))
         self.model = model
-        self.backbone = LLM(model_name=self.backbone_llm_model_name)
-        
-        self.instance_saved_path = os.path.join(
-            TEST_INSTANCE_ROOT_PATH, 
-            "differential", "query_consistency", self.db_id, hashing(self.db_id, nl=self.nl, sql=self.sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
 
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema()
-        schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=schema_with_examples,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
         self.max_retry = self.num * 3
         self.test_cases = self._generator()
-        
-    def set_settings(self, **kwargs):
-        self.num = kwargs.get("num")
-    
+
     def _compare_query_results(self, pred, target):
         if set(target) == set(pred):
             return True
@@ -941,17 +877,6 @@ class SelfConsistencyTestClass(TestClass):
         if pred is not None: __sql_executable_check(pred, self.db_path)
         return True
     
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "nl": kwargs.get("nl"),
-            "sql": kwargs.get("sql"),
-            "nl_mutant": kwargs.get("nl_mutant"),
-            "predict_sql": kwargs.get("predict_sql")
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        
     def _form_instance(self, idx, ret):
         TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
         os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
@@ -1021,29 +946,13 @@ class SelfConsistencyTestClass(TestClass):
 
 class QueryReviewTestClass(TestClass):
     def __init__(self, **kwargs):
-        super().__init__("Step-through Query Review Test Class", **kwargs)
+        super().__init__("Step-through Query Review Test Class", "query_review", "explore", **kwargs)
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
-        )
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "query_review", self.db_id, hashing(self.db_id, nl=self.nl, sql=self.sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-        
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
-        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=None,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
+        )        
         self.test_cases = self._generator()
-        
-    def set_settings(self, **kwargs):
-        pass
 
     def _compare_query_results(self, preds, targets):
         for pred, target in zip(preds, targets):
@@ -1057,14 +966,6 @@ class QueryReviewTestClass(TestClass):
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "turns": kwargs.get("turns"),
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
         
     def _form_instance(self, idx, ret):
         """
@@ -1154,30 +1055,13 @@ class QueryReviewTestClass(TestClass):
 
 class NLReviewTestClass(TestClass):
     def __init__(self, **kwargs):
-        super().__init__("Step-through Natural Language Review Test Class", **kwargs)
+        super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore", **kwargs)
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )
-        
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, "explore", "nl_review", self.db_id, hashing(self.db_id, nl=self.nl, sql=self.sql))
-        os.makedirs(self.instance_saved_path, exist_ok=True)
-        
-        self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.b_id}.sqlite")
-        schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
-        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=schema,
-            schema_with_examples=None,
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
         self.test_cases = self._generator()
-        
-    def set_settings(self, **kwargs):
-        pass
 
     def _compare_query_results(self, preds, targets):
         for pred, target in zip(preds, targets):
@@ -1191,14 +1075,6 @@ class NLReviewTestClass(TestClass):
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "turns": kwargs.get("turns"),
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
         
     def _form_instance(self, idx, ret):
         """

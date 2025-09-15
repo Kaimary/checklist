@@ -177,10 +177,13 @@ class DIF(AbstractTest):
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             CrossModelTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3),
-            SelfConsistencyTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, 
-                num=3, model=LLM(model_name="gpt-4o-mini-0708"))
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3, 
+                model_list=(["resdsql", "dailsql"] \
+                            if "spider" in self.db_root_path else ["cscsql", "chess", "llm:gpt-4o-mini-0708"])
+            ),
+            # SelfConsistencyTestClass(
+            #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, 
+            #     num=3, model=LLM(model_name="gpt-4o-mini-0708"))
         ]
 
 class EXP(AbstractTest):
