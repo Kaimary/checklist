@@ -1,5 +1,6 @@
 import logging
 import random
+import re
 import time
 from abc import ABC, abstractmethod
 
@@ -8,7 +9,7 @@ from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 from typing import Dict, Any
-
+from langchain_core.output_parsers import JsonOutputParser
 
 from langchain_core.exceptions import OutputParserException
 from langchain.output_parsers import OutputFixingParser
@@ -115,6 +116,8 @@ class LLM:
                 prompt_text = prompt.invoke(request_kwargs).messages[0].content
                 # print(f"prompt: \n\n{prompt_text}\n\n")
                 raw_output = self.llm_chain.invoke(prompt_text)
+                if isinstance(parser, JsonOutputParser): 
+                    raw_output.content = re.sub(r'//.*', '', raw_output.content)
                 output = parser.invoke(raw_output)
                 logging.info(f"`{self.llm_chain.model_name}` model response: \"{raw_output.content}\"\n"
                         f"\t- out tokens: {raw_output.response_metadata['token_usage']['completion_tokens']}\n"
@@ -122,6 +125,8 @@ class LLM:
                         f"\t- total tokens: {raw_output.response_metadata['token_usage']['total_tokens']}")
                 break
             except OutputParserException as e:
+                print(e)
+                print(raw_output.content)
                 new_parser = OutputFixingParser.from_llm(parser=parser, llm=self.llm_chain)
                 chain = prompt | self.llm_chain | new_parser
                 if attempt == max_attempts - 1:

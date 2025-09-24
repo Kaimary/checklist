@@ -1517,9 +1517,10 @@ class OrderbyClause(Clause):
                     if instance == "SELECT":
                         continue
                     if instance == "WHERE":
+                        where_clause = re.split(r'where', self.clauses['WHERE'].sql_str, flags=re.IGNORECASE)[1]
                         sql = (
                             sql
-                            + f" WHERE ({self.clauses['WHERE'].sql_str.split('WHERE')[1]}) and `{op.col_name}` IS NULL"
+                            + f" WHERE ({where_clause}) and `{op.col_name}` IS NULL"
                         )
                     else:
                         sql = sql + self.clauses[instance].sql_str
@@ -1538,9 +1539,10 @@ class OrderbyClause(Clause):
                     if instance == "SELECT":
                         continue
                     if instance == "WHERE":
+                        where_clause = re.split(r'where', self.clauses['WHERE'].sql_str, flags=re.IGNORECASE)[1]
                         sql = (
                             sql
-                            + f" WHERE ({self.clauses['WHERE'].sql_str.split('WHERE')[1]}) and `{op.sql_str}` IS NULL"
+                            + f" WHERE ({where_clause}) and `{op.sql_str}` IS NULL"
                         )
                     else:
                         sql = sql + self.clauses[instance].sql_str
@@ -1794,7 +1796,7 @@ class Query:
         if self.table:
             return self.table
 
-        if "LIMIT" not in self.sql and "SELECT" in self.clauses:
+        if "limit" not in self.sql.lower() and "SELECT" in self.clauses:
             sql = self.sql + " LIMIT 10000"
         else:
             sql = self.sql

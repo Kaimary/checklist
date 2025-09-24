@@ -6,6 +6,7 @@ from camel.societies import RolePlaying
 from camel.models import ModelFactory
 from camel.configs import ChatGPTConfig
 from camel.types import ModelPlatformType, ModelType
+import numpy as np
 
 from checklist.spinner import Spinner
 from checklist.parsers import get_parser
@@ -17,7 +18,7 @@ from checklist.database_manager import DatabaseManager
 from checklist.base_test_class import TestClass, ValidationError
 from checklist.database_utils.schema import DatabaseSchema
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
-from checklist.models import CHESS, CSCSQL, DAILSQL, RESDSQL, GenericLLM
+from checklist.models import CHESS, DAILSQL, RESDSQL, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
@@ -105,10 +106,11 @@ class OracleResultTestClass(TestClass):
         # Prune the `lenthy` schema first, to ensure the quality of generated data 
         if any(len(cols) > prunned_threshold for cols in self.schema.values()):
             logging.warning(f"Database {self.db_id} has tables with more than {prunned_threshold} columns. Truncating the schema before generation ...")
-            history = [] # Append the error messages to avoid endless llm loop
+            retry = 0
+            error = set() # Append the error messages to avoid endless llm loop
             parser = get_parser(parser_name="schema_pruning")
-            prompt = get_prompt(template_name="schema_pruning", history_string='\n'.join(history) if history else None)
-            while True:
+            while True and retry < self.max_retry:
+                prompt = get_prompt(template_name="schema_pruning", error_string='\n'.join(error) if error else None)
                 response = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl,
@@ -121,7 +123,8 @@ class OracleResultTestClass(TestClass):
                     self.schema_pruned = True
                     break
                 except ValidationError as e:
-                    history.append(str(e).split('.')[-1])
+                    error.add(str(e).split('.')[-1])
+                    retry += 1
                     logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
 
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
@@ -135,23 +138,32 @@ class OracleResultTestClass(TestClass):
         self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
         self.test_cases = self._generator()
 
-    def _compare_query_results(self, preds, raw_golds):
-        normalized = {
-            key: value if isinstance(value, list) else [value] 
-            for key, value in raw_golds.items()
-        }
-        golds = list(zip(*normalized.values()))
-        if preds and set(preds) == set(golds):
-            return True
-        return False
+    def _compare_query_results(self, preds, oracles):
+        # normalized = {
+        #     key: value if isinstance(value, list) else [value] 
+        #     for key, value in oracles.items()
+        # }
+        # golds = list(zip(*normalized.values()))
+        def freeze(obj):
+            """Recursively convert unhashable objects into hashable equivalents."""
+            if isinstance(obj, dict):
+                # sort keys to make it deterministic
+                return tuple(sorted((k, freeze(v)) for k, v in obj.items()))
+            elif isinstance(obj, (list, tuple, set)):
+                return tuple(freeze(x) for x in obj)
+            elif isinstance(obj, np.ndarray):
+                return tuple(obj.tolist())  # turn ndarray into tuple of values
+            else:
+                return obj
+        return bool(preds) and set(preds) == set(freeze(o) for o in oracles)
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        # ret.description = "Test the original SQL over a faked database with expected execution results"
+        # Test the original SQL over a faked database with expected execution results
         res = validate_sql_query(ret.test_fixtures.db, self.sql)
-        logging.info(f"Validating SQL: {self.sql}\nResult: {res}")
+        logging.info(f"Validating SQL: {self.sql}\nResult: {res['RESULT']}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
-        ret.results.target = ret.test_fixtures.label_result
+        ret.results.target = ret.test_fixtures.label_result["rows"] if "rows" in ret.test_fixtures.label_result.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}\nTarget Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
@@ -176,7 +188,7 @@ class OracleResultTestClass(TestClass):
                 if all(col not in d for d in definitions):
                     raise ValidationError(
                         f"Pruned schema column name checking failed. "
-                        f"Invalid column (in table {table_name}) found in pruned schema: {col}"
+                        f"Column `{col}` should not in table `{table_name}`❌"
                     )
             # extra add primary key columns if not included
             for column_def in definitions:
@@ -215,11 +227,23 @@ class OracleResultTestClass(TestClass):
                 res[table_name] = types
             return res
         def __output_format_check(response):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
             if "database_instances" not in response.keys() or "resulting_data" not in response.keys(): 
                 raise ValidationError(
-                    f"Output format check failed. "
+                    f"Output format(key) check failed. "
                     f"Keys found in response: {','.join(response.keys())}, "
                     f"Expected keys: `database_instances`, `resulting_data`"
+                )
+            if "unknown" not in response["resulting_data"].keys() and (any(k not in response["resulting_data"].keys() for k in ["columns", "rows"])): 
+                raise ValidationError(
+                    f"Output format(key in key) check failed. "
+                    f"Keys found in `resulting_data`: {','.join(response['resulting_data'].keys())}, "
+                    f"Expected keys: `unknown` or `columns` and `rows`"
                 )
             return True
         def __schema_data_alignment_check(response, tables, column_types, schema):
@@ -259,10 +283,10 @@ class OracleResultTestClass(TestClass):
                         raise ValidationError(
                             f"Schema-data column type mismatch. "
                             f"Column type Data : {len(rows[0])} "
-                            f"Expected column count of Table {t}: {len(tables[t])}"
+                            f"Expected column count of Table {t}: {len(column_types[t])}"
                         )
             return True
-        def __response_history_compatible_check(response, history):
+        def __response_history_compatible_check(response, history, max_retry):
             def __dicts_equal___(d1, d2):
                 if d1.keys() != d2.keys():
                     return False
@@ -285,20 +309,26 @@ class OracleResultTestClass(TestClass):
                 if not __dicts_equal___(response["database_instances"], h["data"]): continue
                 # Check whether result is the same or not if test cases are same. If it is the case, drop it
                 if __dicts_equal___(response["resulting_data"], h["label_result"]): 
-                    raise ValidationError("Duplicate test case.")
+                    raise ValidationError("Duplicate(`database_instances`+`resulting_data`) test case.")
                 # Otherwise, double check which `result` is the correct one
+                retry = 0
                 prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
                 parser = get_parser(parser_name="oracle_result_checking")
-                response = self.backbone(prompt, parser, request_kwargs={
-                    "HINT": self.hint,
-                    "QUESTION": self.nl,
-                    "INSTANCES": json.dumps(h['data'], indent=4),
-                    "RESULT1": json.dumps(h['label_result'], indent=4),
-                    "RESULT2": json.dumps(response["resulting_data"], indent=4)
-                })
+                while True and retry < max_retry:
+                    response2 = self.backbone(prompt, parser, request_kwargs={
+                        "HINT": self.hint,
+                        "QUESTION": self.nl,
+                        "INSTANCES": json.dumps(h['data'], indent=4),
+                        "RESULT1": json.dumps(h['label_result'], indent=4),
+                        "RESULT2": json.dumps(response["resulting_data"], indent=4)
+                    })
+                    if isinstance(response2, dict):
+                        if "resulting_data" in response2.keys(): break
+                        if "columns" in response2.keys() and "rows" in response2.keys():
+                            response2 = {"resulting_data": response2}
+                            break
                 # Modify the `result` according to the output (TODO further check its correctness?)
-                h['label_result'] = response["resulting_data"]
-                raise ValidationError(f"Duplicate response detected.")
+                h['label_result'] = response2["resulting_data"]
             return True
         
         # output format check
@@ -309,7 +339,7 @@ class OracleResultTestClass(TestClass):
             if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
         __schema_data_alignment_check(response, table_names, column_types, self.schema)
         # response duplication check
-        __response_history_compatible_check(response, history)
+        __response_history_compatible_check(response, history, self.max_retry)
        
     def _form_instance(self, idx, ret):
         """
@@ -366,7 +396,7 @@ class OracleResultTestClass(TestClass):
                     "QUESTION": self.nl
                     }
                 )
-                try: 
+                try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e: 
                     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
@@ -625,7 +655,7 @@ class NLStrengthenTestClass(TestClass):
         return outputs
 
 class CrossModelTestClass(TestClass):
-    def __init__(self, model_list=["cscsql", "chess", "gpt-4o-mini-0708"], active_model_num=3, **kwargs):
+    def __init__(self, model_list=["cscsql", "chess", "omnisql", "gpt-4o-mini-0708"], active_model_num=3, **kwargs):
         super().__init__("Majority Voting Test Class", "majority_vote", "differential", **kwargs)
         self.active_model_num = active_model_num
         self.model_pool = self._create_nl2sql_model_pool(model_list)
@@ -633,8 +663,10 @@ class CrossModelTestClass(TestClass):
 
     def _create_nl2sql_model_pool(self, model_list):
         MODEL_CLASS_MAP = {
-            "cscsql": CSCSQL,
+            "cscsql7b": CSCSQL7b,
+            "cscsql32b": CSCSQL32b,
             "chess": CHESS,
+            "omnisql": OMNISQL32b,
             "resdsql": RESDSQL,
             "dailsql": DAILSQL
         }
@@ -718,7 +750,7 @@ class CrossModelTestClass(TestClass):
                 candidates = []
                 ret = Munch()
                 ret.test_fixtures = Munch()
-                for model in random.sample(self.model_pool, self.active_model_num):
+                for model in random.sample(self.model_pool, len(self.model_pool)):
                     one_retry = 0
                     while True and one_retry < 3:
                         if isinstance(model, GenericLLM):
@@ -740,9 +772,15 @@ class CrossModelTestClass(TestClass):
                         except ValidationError as e:
                             logging.warning(f"Candidate SQL validation failed: {e}")
                             if verbose: spinner.set_message(f"Candidate SQL validation failed: {e} ...")
-                            invalids.add((candidate, str(e)))
-                            one_retry += 1
-                    if one_retry < 3: candidates.append(candidate)
+                            if isinstance(model, GenericLLM):
+                                invalids.add((candidate, str(e)))
+                                one_retry += 1
+                            else: 
+                                one_retry = 3 # set larger than threshold
+                                break
+                    if one_retry < 3: 
+                        candidates.append(candidate)
+                        if len(candidates) == self.active_model_num: break
                 # validate after getting all candidates
                 try: 
                     self._validate_test_fixture(candidates)
@@ -1055,8 +1093,8 @@ class NLReviewTestClass(TestClass):
                 print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
                 break
 
-            print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-            print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+            # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+            # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
             
             parsed_response = json.loads(assistant_response.msg.content.strip())
             turns.append(parsed_response)

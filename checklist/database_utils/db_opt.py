@@ -1,5 +1,41 @@
 import os, sqlite3
 
+sqlite_reserved_keywords = [
+    "ABORT", "ACTION", "ADD", "AFTER",
+    "ALL", "ALTER", "ANALYZE", "AND",
+    "AS", "ASC", "ATTACH", "AUTOINCREMENT",
+    "BEFORE", "BEGIN", "BETWEEN", "BY",
+    "CASCADE", "CASE", "CAST", "CHECK",
+    "COLLATE", "COLUMN", "COMMIT", "CONFLICT",
+    "CONSTRAINT", "CREATE", "CROSS", "CURRENT",
+    "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+    "DATABASE", "DEFAULT", "DEFERRABLE", "DEFERRED",
+    "DELETE", "DESC", "DETACH", "DISTINCT",
+    "DROP", "EACH", "ELSE", "END",
+    "ESCAPE", "EXCEPT", "EXCLUSIVE", "EXISTS",
+    "EXPLAIN", "FAIL", "FOR", "FOREIGN",
+    "FROM", "FULL", "GLOB", "GROUP",
+    "HAVING", "IF", "IGNORE", "IMMEDIATE",
+    "IN", "INDEX", "INDEXED", "INITIALLY",
+    "INNER", "INSERT", "INSTEAD", "INTERSECT",
+    "INTO", "IS", "ISNULL", "JOIN",
+    "KEY", "LEFT", "LIKE", "LIMIT",
+    "MATCH", "NATURAL", "NO", "NOT",
+    "NOTNULL", "NULL", "OF", "OFFSET",
+    "ON", "OR", "ORDER", "OUTER",
+    "PLAN", "PRAGMA", "PRIMARY", "QUERY",
+    "RAISE", "RECURSIVE", "REFERENCES", "REGEXP",
+    "REINDEX", "RELEASE", "RENAME", "REPLACE",
+    "RESTRICT", "RIGHT", "ROLLBACK", "ROW",
+    "SAVEPOINT", "SELECT", "SET", "TABLE",
+    "TEMP", "TEMPORARY", "THEN", "TO",
+    "TRANSACTION", "TRIGGER", "UNION", "UNIQUE",
+    "UPDATE", "USING", "VACUUM", "VALUES",
+    "VIEW", "VIRTUAL", "WHEN", "WHERE",
+    "WITH", "WITHOUT"
+]
+
+
 def duplicate_sqlite_database(src_db_path, dest_db_path, reset=False):
     source = sqlite3.connect(src_db_path)
     dest = sqlite3.connect(dest_db_path)
@@ -16,6 +52,7 @@ def duplicate_sqlite_database(src_db_path, dest_db_path, reset=False):
         # Disable foreign key checks temporarily to avoid constraint issues
         cursor.execute("PRAGMA foreign_keys = OFF")
         for (table_name,) in tables:
+            if table_name.upper() in sqlite_reserved_keywords: table_name = f'"{table_name}"'
             cursor.execute(f"DELETE FROM {table_name}")
         # Re-enable foreign keys
         cursor.execute("PRAGMA foreign_keys = ON")
@@ -43,6 +80,7 @@ def insert_rows_into_table(db_path, table_name, rows):
     try:
         # Determine number of columns from the first row
         placeholders = ','.join('?' for _ in rows[0])
+        if table_name.upper() in sqlite_reserved_keywords: table_name = f'"{table_name}"'
         sql = f"INSERT INTO {table_name} VALUES ({placeholders})"
 
         cursor.executemany(sql, rows)

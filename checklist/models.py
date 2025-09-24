@@ -9,7 +9,26 @@ class BaseNL2SQLModel(ABC):
     def __call__(self, **kwargs):
         raise NotImplementedError
     
-class CSCSQL(BaseNL2SQLModel):
+class CSCSQL7b(BaseNL2SQLModel):
+    def __init__(self):
+        super().__init__()
+        self.model_name = "cscsql"
+
+        dev_json = "data/bird/dev_20240627/dev.json"
+        output_file = "data/bird/results/csc-sql-7b.sql"
+        self.dev = json.load(open(dev_json))
+        self.outputs = [line.strip() for line in open(output_file)]
+
+    def __call__(self, **kwargs):
+        nl = kwargs.get("nl", None)
+        for ex in self.dev:
+            if ex["question"] == nl:
+                idx = self.dev.index(ex)
+                return self.outputs[idx]
+        raise ValueError("No matching NL found in the dev set")
+
+
+class CSCSQL32b(BaseNL2SQLModel):
     def __init__(self):
         super().__init__()
         self.model_name = "cscsql"
@@ -26,7 +45,7 @@ class CSCSQL(BaseNL2SQLModel):
                 idx = self.dev.index(ex)
                 return self.outputs[idx]
         raise ValueError("No matching NL found in the dev set")
-
+    
 class CHESS(BaseNL2SQLModel):
     def __init__(self):
         super().__init__()
@@ -34,6 +53,24 @@ class CHESS(BaseNL2SQLModel):
 
         dev_json = "data/bird/dev_20240627/dev.json"
         output_file = "data/bird/results/chess.sql"
+        self.dev = json.load(open(dev_json))
+        self.outputs = [line.strip() for line in open(output_file)]
+
+    def __call__(self, **kwargs):
+        nl = kwargs.get("nl", None)
+        for ex in self.dev:
+            if ex["question"] == nl:
+                idx = self.dev.index(ex)
+                return self.outputs[idx]
+        raise ValueError("No matching NL found in the dev set")
+    
+class OMNISQL32b(BaseNL2SQLModel):
+    def __init__(self):
+        super().__init__()
+        self.model_name = "omnisql"
+
+        dev_json = "data/bird/dev_20240627/dev.json"
+        output_file = "data/bird/results/omnisql-32b.sql"
         self.dev = json.load(open(dev_json))
         self.outputs = [line.strip() for line in open(output_file)]
 

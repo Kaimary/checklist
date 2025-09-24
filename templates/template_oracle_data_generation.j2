@@ -19,7 +19,7 @@ Question:
 Hint:
 {{HINT}}
 
-Please respond with a JSON object structured as follows:
+Please respond with a valid JSON object structured as follows:
 {% raw %}
 {
     "chain_of_thought_reasoning": "Your thought process on how you think. Explain how to get the resulting data step by step based on the instances. This is very important!",
@@ -29,7 +29,11 @@ Please respond with a JSON object structured as follows:
         ...
     }
     "resulting_data": {
-        "table.column": "value",
+        "columns": ["table.column1", "table.column2", ...],
+        "rows": [
+            ["value1", "value2", ...],
+            ...
+        ]
         ....
         // If no data, return: "unknown": ""
     }

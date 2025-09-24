@@ -179,7 +179,7 @@ class DIF(AbstractTest):
             CrossModelTestClass(
                 nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3, 
                 model_list=(["resdsql", "dailsql"] \
-                            if "spider" in self.db_root_path else ["cscsql", "chess", "llm:gpt-4o-mini-0708"])
+                            if "spider" in self.db_root_path else ["cscsql7b", "cscsql32b", "chess", "omnisql32b", "llm:gpt-4o-mini-0708", "llm:gpt-4o-1120"])
             ),
             # SelfConsistencyTestClass(
             #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, 
@@ -215,8 +215,6 @@ class EXP(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            QueryReviewTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3),
-            # NLReviewTestClass(
-            # nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
+            QueryReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3),
+            NLReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]

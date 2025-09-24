@@ -1,5 +1,6 @@
 import collections
 from collections import defaultdict, OrderedDict
+import logging
 import dill
 import json
 
@@ -300,6 +301,7 @@ class TestSuite:
         """
         ret = {}
         detection_results = []
+        passed, failed = 0, 0
         for name, t in self.tests.items():
             if verbose: print(f'Running {name}')
             res = t.run1(verbose=verbose, **kwargs)
@@ -309,11 +311,15 @@ class TestSuite:
                 t.test_classes[idx].name: {
                     "total": len(tc.passed),
                     "passed": int(np.sum(tc.passed)),
-                    "criteria": tc.criteria,
-                    # "failed": int(len(t.result_indexes) - np.sum(t.passed))
+                    "criteria": tc.criteria
                 }
                 for idx, tc in enumerate(t.results.test_classes)
             }
+            if res == True: passed += 1
+            else: failed += 1
+            if passed >=4 or failed >=2:
+                logging.warning("At least 2 tests have failed or four tests have passed, early stopping for efficiency.")
+                break
         ret["judgment"] = all(detection_results)
 
         return ret
