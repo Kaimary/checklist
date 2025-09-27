@@ -117,7 +117,8 @@ class LLM:
                 # print(f"prompt: \n\n{prompt_text}\n\n")
                 raw_output = self.llm_chain.invoke(prompt_text)
                 if isinstance(parser, JsonOutputParser): 
-                    raw_output.content = re.sub(r'//.*', '', raw_output.content)
+                    raw_output.content = re.sub(r'(?<!:)//.*', '', raw_output.content)
+                    raw_output.content = re.sub(r'(?<=,\s)NULL\b', '"NULL"', raw_output.content)
                 output = parser.invoke(raw_output)
                 logging.info(f"`{self.llm_chain.model_name}` model response: \"{raw_output.content}\"\n"
                         f"\t- out tokens: {raw_output.response_metadata['token_usage']['completion_tokens']}\n"
@@ -126,7 +127,6 @@ class LLM:
                 break
             except OutputParserException as e:
                 print(e)
-                print(raw_output.content)
                 new_parser = OutputFixingParser.from_llm(parser=parser, llm=self.llm_chain)
                 chain = prompt | self.llm_chain | new_parser
                 if attempt == max_attempts - 1:

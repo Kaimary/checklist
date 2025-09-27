@@ -19,13 +19,14 @@ Question:
 Hint:
 {{HINT}}
 
-Please respond with a valid JSON object structured as follows:
+Output requirement (must be **exact JSON**, nothing else):
+Return a single JSON object with this exact structure (keys and string values **must** use double quotes `"` — never single quotes `'`):
 {% raw %}
 {
     "chain_of_thought_reasoning": "Your thought process on how you think. Explain how to get the resulting data step by step based on the instances. This is very important!",
     "database_instances": {
-        "table1": [["a data row of table1"], ...]
-        "table2": [["a data row of table2"], ...]
+        "table1": [["col1_value", "col2_value", ...], ...]
+        "table2": [...]
         ...
     }
     "resulting_data": {

@@ -11,10 +11,11 @@ class AbstractJudge:
         pass
 
 class LLMJudge(AbstractJudge):
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, enable_few_shot: bool = False):
         super().__init__()
         self.model_name = model_name
         self.model = LLM(model_name=model_name)
+        self.enable_few_shot = enable_few_shot
 
     def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         self.nl = nl
@@ -37,9 +38,9 @@ class LLMJudge(AbstractJudge):
         )
 
     def run(self):
-        parser = get_parser(parser_name="llm-nl2sql-judgement")
+        parser = get_parser(parser_name="llm_nl2sql_judgment")
         prompt = get_prompt(
-            template_name="llm-nl2sql-judgement", 
+            template_name="llm_nl2sql_judgment", 
             schema_string=self.schema_string
         )
         response = self.model(prompt, parser, request_kwargs={

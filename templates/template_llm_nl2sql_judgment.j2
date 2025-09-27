@@ -3,7 +3,7 @@ Below, you are presented with a database schema, a question (with hint if applic
 Your task is to:
 - Read and understand the schema and the natural language question.
 - Determine whether the correctness of provided SQL query based on the schema and question.
-- Provide your reasoning process and your final judgement (Correct / Incorrect).
+- Provide your reasoning process and your final judgement.
 
 Database Schem
 ###
@@ -21,13 +21,18 @@ Hint:
 SQL:
 {{SQL}}
 
-Please respond with a JSON object structured as follows:
+Please respond with a valid JSON object structured as follows:
 {% raw %}
 {
-    "chain_of_thought_reasoning": "Your thought process on how you think.",
-    "judgement": "Correct / Incorrect",
+    "chain_of_thought_reasoning": "Your thought process on how you think. Explain why you get the judgment step by step based on the above information. This is very important!",
+    "judgment": true or false (true means the SQL is correct, false means the SQL is incorrect)
 }
 {% endraw %}
 
+{% if EXAMPLES %}
+Below are some examples of reasoning and judgment, which may help you:
+###
+{{EXAMPLES}}
+{% endif %}
 
 Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

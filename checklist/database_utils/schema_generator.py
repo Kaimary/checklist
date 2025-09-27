@@ -282,7 +282,8 @@ class DatabaseSchemaGenerator:
         ddl_commands = self._extract_create_ddl_commands()
         for table_name, ddl_command in ddl_commands.items():
             ddl_command = re.sub(r'\s+', ' ', ddl_command.strip())
-            create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+            # print(ddl_command)
+            create_table_match = re.match(r"CREATE TABLE\s+['\"`]?([\w -]+)['\"`]?\s*\((.*)\)", ddl_command, re.DOTALL)
             table = create_table_match.group(1).strip()
             if table != table_name:
                 logging.warning(f"Table name mismatch: {table} != {table_name}")

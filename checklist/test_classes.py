@@ -263,7 +263,8 @@ class OracleResultTestClass(TestClass):
                 'TEXT': str,
                 'BLOB': bytes,
                 'NUMERIC': float,
-                'DATE': str
+                'DATE': str,
+                'DATETIME': str
             }
             data = response["database_instances"]
             for t, rows in data.items():
@@ -414,6 +415,7 @@ class OracleResultTestClass(TestClass):
                     "EXECUTED_RESULT": json.dumps(response["resulting_data"], indent=4)
                     }
                 )
+                if "columns" in response2.keys() and "rows" in response2.keys(): response2 = {"resulting_data": response2}
                 response["resulting_data"] = response2["resulting_data"]
                 try:
                     self._validate_test_fixture(response, history)
