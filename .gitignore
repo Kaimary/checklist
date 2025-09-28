@@ -15,3 +15,4 @@ logs/
 run_test.py
 camel_test.py
 extract_chess_results.py
+test_*
