@@ -25,7 +25,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
     FN  = 0  # correct SQL but testing judgment failed
     FP  = 0  # incorrect SQL but testing judgment falsely passsed
     TN  = 0  # incorrect SQL and testing judgment failed    
-    for idx, (ex, judgment) in tqdm(enumerate(zip(data[:len(judgments)], judgments)), total=len(data)):
+    for idx, (ex, judgment) in tqdm(enumerate(zip(data[:len(judgments)], judgments)), total=len(judgments)):
         # print(idx)
         db_id = ex['db_id']
         db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")

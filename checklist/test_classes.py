@@ -75,6 +75,8 @@ class SemanticCheckTestClass(TestClass):
         return ret
     
     def _generator(self):
+        if self.use_cache: return self._load_cached_test_cases()
+        
         bugs, outputs = [], []
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
@@ -379,6 +381,8 @@ class OracleResultTestClass(TestClass):
                 for i, h in enumerate(history)
             )
 
+        if self.use_cache: return self._load_cached_test_cases()
+
         parser = get_parser(parser_name="oracle_data_generation")
         parser2 = get_parser(parser_name="oracle_data_verification")
         history, outputs = [], []
@@ -507,6 +511,8 @@ class NLRelaxTestClass(TestClass):
                 for idx, invalid in enumerate(invalids)
             )
         
+        if self.use_cache: return self._load_cached_test_cases()
+
         parser = get_parser(parser_name="nl_relaxing_generation")
         history, outputs = [], []
         invalids = set()
@@ -619,6 +625,8 @@ class NLStrengthenTestClass(TestClass):
                 for sql in invalids
             )
         
+        if self.use_cache: return self._load_cached_test_cases()
+
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
         invalids = set()
@@ -742,6 +750,9 @@ class CrossModelTestClass(TestClass):
                 f"invalid sql {idx+1}:\n{invalid[0]}\nerror:{invalid[1]}"
                 for idx, invalid in enumerate(invalids)
             )
+        
+        if self.use_cache: return self._load_cached_test_cases()
+
         prompt = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser = get_parser(parser_name="nl2sql_translation")
         outputs = []
@@ -859,6 +870,8 @@ class SelfConsistencyTestClass(TestClass):
                 for i, h in enumerate(history)
             )
         
+        if self.use_cache: return self._load_cached_test_cases()
+
         parser = get_parser(parser_name="nl_mutation_generation")
         prompt2 = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser2 = get_parser(parser_name="nl2sql_translation")
@@ -945,72 +958,74 @@ class QueryReviewTestClass(TestClass):
         
         return ret
     
-    def _generator(self, verbose=True):
-        if self.use_cache:
-            outputs = self._load_cached_test_cases()
-        else:   
-            outputs = []
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
-            task_prompt = prompt.invoke({
-                "QUESTION": self.nl,
-                "HINT": self.hint,
-                "SQL": self.sql
-                }
-            ).messages[0].content
-            # prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
-            #     f"{self.sql}"
-            #     f"for natural language question \"{self.nl}\" under the database schema\n"
-            #     f"{self.schema_string}"
-            # )
-            role_play_session = RolePlaying(
-                assistant_role_name="SQL Developer",
-                assistant_agent_kwargs=dict(model=self.backbone),
-                user_role_name="Rubber Duck Debugging Assistant",
-                user_agent_kwargs=dict(model=self.backbone),
-                task_prompt=task_prompt,
-                with_task_specify=False,
-                #   task_specify_agent_kwargs=dict(model=model),
-            )
+    def _generator(self):
+        if self.use_cache: return self._load_cached_test_cases()
 
-            # # Print initial system messages
-            # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
-            # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
-            # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
-            # print(
-            #     Fore.CYAN
-            #     + "Specified task prompt:"
-            #     + f"\\n{role_play_session.specified_task_prompt}\\n"
-            #     + Style.RESET_ALL
-            # )
-            # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
-            n = 0
-            chat_turn_limit = 10
-            input_msg = role_play_session.init_chat()
-            turns = []
-            # Turn-based simulation
-            while n < chat_turn_limit:
-                n += 1
-                assistant_response, user_response = role_play_session.step(input_msg)
-                if assistant_response.terminated:
-                    print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
-                    break
-                if user_response.terminated:
-                    print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
-                    break
-                
-                # Disable printing animation as it really slows down the test
-                # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-                # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-                
-                parsed_response = json.loads(assistant_response.msg.content.strip())
-                if "CAMEL_TASK_DONE" in user_response.msg.content: break
-                turns.append(parsed_response)
-                input_msg = assistant_response.msg
-        
-            ret.test_fixtures.turns = turns
-            outputs.append(self._form_instance(len(outputs), ret))
+        outputs = []
+        ret = Munch()
+        ret.test_fixtures = Munch()
+        prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
+        task_prompt = prompt.invoke({
+            "QUESTION": self.nl,
+            "HINT": self.hint,
+            "SQL": self.sql
+            }
+        ).messages[0].content
+        # prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
+        #     f"{self.sql}"
+        #     f"for natural language question \"{self.nl}\" under the database schema\n"
+        #     f"{self.schema_string}"
+        # )
+        role_play_session = RolePlaying(
+            assistant_role_name="SQL Developer",
+            assistant_agent_kwargs=dict(model=self.backbone),
+            user_role_name="Rubber Duck Debugging Assistant",
+            user_agent_kwargs=dict(model=self.backbone),
+            task_prompt=task_prompt,
+            with_task_specify=False,
+            #   task_specify_agent_kwargs=dict(model=model),
+        )
+
+        # # Print initial system messages
+        # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
+        # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
+        # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
+        # print(
+        #     Fore.CYAN
+        #     + "Specified task prompt:"
+        #     + f"\\n{role_play_session.specified_task_prompt}\\n"
+        #     + Style.RESET_ALL
+        # )
+        # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
+        n = 0
+        chat_turn_limit = 10
+        input_msg = role_play_session.init_chat()
+        turns = []
+        # Turn-based simulation
+        while n < chat_turn_limit:
+            n += 1
+            assistant_response, user_response = role_play_session.step(input_msg)
+            if assistant_response.terminated:
+                print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
+                break
+            if user_response.terminated:
+                print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
+                break
+            
+            # Disable printing animation as it really slows down the test
+            # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+            # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+            
+            parsed_response = {
+                "user_msg": user_response.msg.content,
+                **json.loads(assistant_response.msg.content.strip())
+            }
+            if "CAMEL_TASK_DONE" in user_response.msg.content: break
+            turns.append(parsed_response)
+            input_msg = assistant_response.msg
+    
+        ret.test_fixtures.turns = turns
+        outputs.append(self._form_instance(len(outputs), ret))
 
         return outputs
 
@@ -1054,7 +1069,9 @@ class NLReviewTestClass(TestClass):
         
         return ret
     
-    def _generator(self, verbose=True):    
+    def _generator(self):
+        if self.use_cache: return self._load_cached_test_cases()
+
         outputs = []
         ret = Munch()
         ret.test_fixtures = Munch()
@@ -1099,7 +1116,10 @@ class NLReviewTestClass(TestClass):
             # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
             # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
             
-            parsed_response = json.loads(assistant_response.msg.content.strip())
+            parsed_response = {
+                "user_msg": user_response.msg.content,
+                **json.loads(assistant_response.msg.content.strip())
+            }
             turns.append(parsed_response)
             if "CAMEL_TASK_DONE" in user_response.msg.content: break
             
