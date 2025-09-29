@@ -61,7 +61,7 @@ class TestClass(ABC):
         self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.schema_string = SchemaCache.get_schema(db_id, self.db_path, db_root_path)
         
-        kwargs = {nl: self.nl if "nl" in key else None, sql: self.sql if "sql" in key else None}
+        kwargs = {"nl": self.nl if "nl" in key else None, "sql": self.sql if "sql" in key else None}
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, abbrev_type, abbrev_name, self.db_id, hashing(**kwargs))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 

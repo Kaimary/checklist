@@ -80,6 +80,7 @@ class SemanticCheckTestClass(TestClass):
         with spinner:
             ret = Munch()
             ret.test_fixtures = Munch()
+            parsed_query = None
             try:
                 parsed_query = Query(self.sql, copy.deepcopy(self.schema))
             except Exception as e:

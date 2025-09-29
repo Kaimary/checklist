@@ -11,8 +11,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
     judgments = [json.loads(line) for line in open(judgment_file_path)]
     if benchmark_name in ["spider", "bird"]:
         assert predicted_sql_path is not None
-        preds = [value.split('\t-----')[0] for value in json.load(open(predicted_sql_path)).values()] \
-            if benchmark_name == "bird" else [line.strip() for line in open(predicted_sql_path).readlines()]
+        preds = [line.strip() for line in open(predicted_sql_path).readlines()]
         assert len(preds) == len(data)
 
     Acc = 0

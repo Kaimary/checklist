@@ -14,7 +14,7 @@ class CSCSQL7b(BaseNL2SQLModel):
         super().__init__()
         self.model_name = "cscsql"
 
-        dev_json = "data/bird/dev_20240627/dev.json"
+        dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/csc-sql-7b.sql"
         self.dev = json.load(open(dev_json))
         self.outputs = [line.strip() for line in open(output_file)]
@@ -33,7 +33,7 @@ class CSCSQL32b(BaseNL2SQLModel):
         super().__init__()
         self.model_name = "cscsql"
 
-        dev_json = "data/bird/dev_20240627/dev.json"
+        dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/csc-sql-32b.sql"
         self.dev = json.load(open(dev_json))
         self.outputs = [line.strip() for line in open(output_file)]
@@ -51,7 +51,7 @@ class CHESS(BaseNL2SQLModel):
         super().__init__()
         self.model_name = "chess"
 
-        dev_json = "data/bird/dev_20240627/dev.json"
+        dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/chess.sql"
         self.dev = json.load(open(dev_json))
         self.outputs = [line.strip() for line in open(output_file)]
@@ -69,7 +69,7 @@ class OMNISQL32b(BaseNL2SQLModel):
         super().__init__()
         self.model_name = "omnisql"
 
-        dev_json = "data/bird/dev_20240627/dev.json"
+        dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/omnisql-32b.sql"
         self.dev = json.load(open(dev_json))
         self.outputs = [line.strip() for line in open(output_file)]
