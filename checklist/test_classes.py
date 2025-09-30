@@ -261,6 +261,7 @@ class OracleResultTestClass(TestClass):
                     )
             # column count and data types consistent check
             sqlite_type_map = {
+                'INT': int,
                 'INTEGER': int,
                 'REAL': float,
                 'TEXT': str,
