@@ -18,7 +18,7 @@ from checklist.database_manager import DatabaseManager
 from checklist.base_test_class import TestClass, ValidationError
 from checklist.database_utils.schema import DatabaseSchema
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
-from checklist.models import CHESS, DAILSQL, RESDSQL, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
+from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
@@ -680,7 +680,9 @@ class CrossModelTestClass(TestClass):
             "chess": CHESS,
             "omnisql": OMNISQL32b,
             "resdsql": RESDSQL,
-            "dailsql": DAILSQL
+            "dailsql": DAILSQL,
+            "codes15b": CODES15b,
+            "codes7b": CODES7b
         }
         models = []
         for name in model_list:
@@ -701,10 +703,14 @@ class CrossModelTestClass(TestClass):
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.pred = [execute_sql(self.db_path, candidate_sql) for candidate_sql in ret.test_fixtures.candidates]
-        ret.results.target = execute_sql(self.db_path, self.sql)
         ret.results.standard = "majority(pred) == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        ret.results.pred = [execute_sql(self.db_path, candidate_sql) for candidate_sql in ret.test_fixtures.candidates]
+        try:
+            ret.results.target = execute_sql(self.db_path, self.sql)
+            passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        except:
+            ret.results.target = None
+            passed = False
         return passed, ret.test_fixtures, ret.results
     
     def _validate_test_fixture(self, candidates):

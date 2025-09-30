@@ -12,7 +12,7 @@ class BaseNL2SQLModel(ABC):
 class CSCSQL7b(BaseNL2SQLModel):
     def __init__(self):
         super().__init__()
-        self.model_name = "cscsql"
+        self.model_name = "cscsql-7b"
 
         dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/csc-sql-7b.sql"
@@ -27,11 +27,10 @@ class CSCSQL7b(BaseNL2SQLModel):
                 return self.outputs[idx]
         raise ValueError("No matching NL found in the dev set")
 
-
 class CSCSQL32b(BaseNL2SQLModel):
     def __init__(self):
         super().__init__()
-        self.model_name = "cscsql"
+        self.model_name = "cscsql-32b"
 
         dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/csc-sql-32b.sql"
@@ -107,6 +106,42 @@ class DAILSQL(BaseNL2SQLModel):
 
         dev_json = "data/spider/dev.json"
         output_file = "data/spider/results/dailsql.sql"
+        self.dev = json.load(open(dev_json))
+        self.outputs = [line.strip() for line in open(output_file)]
+
+    def __call__(self, **kwargs):
+        nl = kwargs.get("nl", None)
+        for ex in self.dev:
+            if ex["question"] == nl:
+                idx = self.dev.index(ex)
+                return self.outputs[idx]
+        raise ValueError("No matching NL found in the dev set")
+
+class CODES7b(BaseNL2SQLModel):
+    def __init__(self):
+        super().__init__()
+        self.model_name = "codes-7b"
+
+        dev_json = "data/spider/dev.json"
+        output_file = "data/spider/results/codes-7b.sql"
+        self.dev = json.load(open(dev_json))
+        self.outputs = [line.strip() for line in open(output_file)]
+
+    def __call__(self, **kwargs):
+        nl = kwargs.get("nl", None)
+        for ex in self.dev:
+            if ex["question"] == nl:
+                idx = self.dev.index(ex)
+                return self.outputs[idx]
+        raise ValueError("No matching NL found in the dev set")
+    
+class CODES15b(BaseNL2SQLModel):
+    def __init__(self):
+        super().__init__()
+        self.model_name = "codes-15b"
+
+        dev_json = "data/spider/dev.json"
+        output_file = "data/spider/results/codes-15b.sql"
         self.dev = json.load(open(dev_json))
         self.outputs = [line.strip() for line in open(output_file)]
 
