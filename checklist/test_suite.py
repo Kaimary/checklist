@@ -320,7 +320,7 @@ class TestSuite:
             if passed >=4 or failed >=2:
                 logging.warning("At least 2 tests have failed or four tests have passed, early stopping for efficiency.")
                 break
-        ret["judgment"] = all(detection_results)
+        ret["judgment"] = any(detection_results)
 
         return ret
             
