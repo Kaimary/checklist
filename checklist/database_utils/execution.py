@@ -35,6 +35,7 @@ def execute_sql(db_path: str, sql: str, fetch: Union[str, int] = "all") -> Any:
         with sqlite3.connect(db_path) as conn:
             conn.text_factory = lambda x: x.decode('utf-8', errors='replace')
             cursor = conn.cursor()
+            sql = sql.replace('\\', '')
             cursor.execute(sql)
             if fetch == "all":
                 return cursor.fetchall()

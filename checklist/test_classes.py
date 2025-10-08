@@ -421,6 +421,9 @@ class OracleResultTestClass(TestClass):
                     "EXECUTED_RESULT": json.dumps(response["resulting_data"], indent=4)
                     }
                 )
+                if not isinstance(response2, dict):
+                    retry += 1
+                    continue
                 if "columns" in response2.keys() and "rows" in response2.keys(): response2 = {"resulting_data": response2}
                 response["resulting_data"] = response2["resulting_data"]
                 try:
