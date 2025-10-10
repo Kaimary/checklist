@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_anthropic import ChatAnthropic
+# from langchain_anthropic import ChatAnthropic
 from typing import Dict, Any
 from langchain_core.output_parsers import JsonOutputParser
 
