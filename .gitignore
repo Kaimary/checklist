@@ -16,3 +16,6 @@ run_test.py
 camel_test.py
 extract_chess_results.py
 test_*
+scripts/
+.env.bak
+spider_dev_nl_mutants.json

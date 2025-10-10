@@ -1,3 +1,4 @@
+from collections import defaultdict
 import json
 import argparse
 import os
@@ -21,6 +22,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
     moderates = 0
     challenging_acc = 0
     challengings = 0
+    invalids = 0
     TP  = 0  # correct SQL and testing judgment passed
     FN  = 0  # correct SQL but testing judgment failed
     FP  = 0  # incorrect SQL but testing judgment falsely passsed
@@ -30,7 +32,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
         db_id = ex['db_id']
         db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
         pred = preds[idx] if benchmark_name in ["spider", "bird"] else ex['sql']
-        difficulty = ex['difficulty'] if 'difficulty' in ex else 'unknown'
+        difficulty = ex['difficulty'] if 'difficulty' in ex.keys() else 'unknown'
         if difficulty == 'simple': simples += 1
         elif difficulty == 'moderate': moderates += 1
         elif difficulty == 'challenging': challengings += 1
@@ -44,8 +46,9 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
             # for nl2sql-bugs, we directly use the label in the dataset
             ret['res'] = 1 if ex['label'] == True else 0
         judgment_label = True if ret['res'] == 1 else False
-        if 'judgment' not in judgment:
-            print(f"Warning: No judgment found for index {idx}. Skipping this entry.")
+        if 'judgment' not in judgment.keys() or judgment['judgment'] == "UNDETERMINED":
+            invalids += 1
+            # print(f"Warning: No judgment found for index {idx}. Skipping this entry.")
             continue
         if judgment_label == judgment['judgment']: 
             Acc += 1
@@ -61,7 +64,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
         else: TN += 1
     
     print(f"Evaluation Results of `{judge_name}` on `{benchmark_name}{f'+{nl2sql_model_name}' if nl2sql_model_name else ''}`:")
-    print(f"Total Accuracy: {Acc/len(judgments)}")
+    print(f"Total Accuracy: {Acc/(len(judgments)-invalids)} ({Acc}/{len(judgments)-invalids})")
     if simples > 0:
         print(f"Simple-Difficulty Accuracy: {simple_acc/simples} ({simple_acc}/{simples})")
         print(f"Moderate-Difficulty Accuracy: {moderate_acc/moderates} ({moderate_acc}/{moderates})")
@@ -73,3 +76,34 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
     negative_recall = TN / (TN + FP) if TN + FP > 0 else 0
     f1 = 2 * (positive_precision * positive_recall) / (positive_precision + positive_recall) if positive_precision + positive_recall > 0 else 0
     print(f"PP: {positive_precision}, PR: {positive_recall}, NP: {negative_precision}, NR: {negative_recall}, F1: {f1}")
+
+
+def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, data_file_path):
+    data = json.load(open(data_file_path))
+    judgments = [json.loads(line) for line in open(judgment_file_path)]
+    sub_err_type_acc_dict = defaultdict(int)
+    sub_err_type_total_dict = defaultdict(int)
+    TP  = 0  # correct SQL and testing judgment passed=]
+    FN  = 0  # correct SQL but testing judgment failed
+    FP  = 0  # incorrect SQL but testing judgment falsely passsed
+    TN  = 0  # incorrect SQL and testing judgment failed    
+    for idx, (ex, judgment) in tqdm(enumerate(zip(data[:len(judgments)], judgments)), total=len(judgments)):
+        # print(idx)
+        db_id = ex['db_id']
+        db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
+        for err in ex['error_types']:
+            sub_err_type_total_dict[err['sub_error_type']] += 1
+            
+        ret = {}
+        ret['res'] = 1 if ex['label'] == True else 0
+        judgment_label = True if ret['res'] == 1 else False
+        if 'judgment' not in judgment:
+            print(f"Warning: No judgment found for index {idx}. Skipping this entry.")
+            continue
+        if judgment_label == judgment['judgment']: 
+            for err in ex['error_types']:
+                sub_err_type_acc_dict[err['sub_error_type']] += 1
+    
+    print(f"Sub-Error Type Evaluation Results of `{judge_name}`:")
+    for name, acc in sub_err_type_acc_dict.items():
+        print(f"{name}: {acc/sub_err_type_total_dict[name]} ({acc}/{sub_err_type_total_dict[name]})")

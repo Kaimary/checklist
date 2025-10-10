@@ -11,7 +11,7 @@ class AbstractJudge:
         pass
 
 class LLMJudge(AbstractJudge):
-    def __init__(self, model_name: str, enable_few_shot: bool = False):
+    def __init__(self, model_name: str, enable_few_shot):
         super().__init__()
         self.model_name = model_name
         self.model = LLM(model_name=model_name)
@@ -41,7 +41,8 @@ class LLMJudge(AbstractJudge):
         parser = get_parser(parser_name="llm_nl2sql_judgment")
         prompt = get_prompt(
             template_name="llm_nl2sql_judgment", 
-            schema_string=self.schema_string
+            schema_string=self.schema_string,
+            examples_string="placeholder" if self.enable_few_shot else None
         )
         response = self.model(prompt, parser, request_kwargs={
             "HINT": self.hint, 

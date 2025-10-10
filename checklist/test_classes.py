@@ -824,44 +824,74 @@ class CrossModelTestClass(TestClass):
         return outputs
 
 class SelfConsistencyTestClass(TestClass):
-    def __init__(self, model=None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__("Query Consistency Test Class", "query_consistency", "differential", **kwargs)
-        if model is None:
-            raise(Exception('No model provided. Please specify your NL2SQL model first.'))
-        self.model = model
-
-        self.max_retry = self.num * 3
+        self.max_retry = self.num # hard-code the max retry to be the number of test cases
+        self.cnt = 0
+        self.nl_mutants = None
+        self.nl_mutants_sql_outputs = None
+        self.nl_mutants_saved_path = "spider_dev_nl_mutants.json"
+        self.nl_mutants_sql_outputs_path = "codes_pred_nl_mutants.sql"
+        # NOTICE!!! 
+        # this test pre-checks whether there are predicted SQL outputs; 
+        # If exists, will do the test; Otherwise, generate nl mutants and do fake testing.
+        if os.path.exists(self.nl_mutants_sql_outputs_path):
+            print(f"Predicted SQL outputs detected (`{self.nl_mutants_sql_outputs_path}`), ensure that you're aware of the behavior of using them...")
+            with open(self.nl_mutants_saved_path) as f:
+                self.nl_mutants = json.load(f)
+            assert len(self.nl_mutants) % self.num == 0, f"The number of NL mutants ({len(self.nl_mutants)}) should be a multiple of the number of test cases ({self.num})"
+            lines = open(self.nl_mutants_sql_outputs_path).readlines()
+            self.nl_mutants_sql_outputs = lines[:self.num]
+            with open(self.nl_mutants_sql_outputs_path, "w") as f:
+                f.writelines(lines[self.num:])
         self.test_cases = self._generator()
 
     def _compare_query_results(self, pred, target):
-        if set(target) == set(pred):
+        if pred and target and set(target) == set(pred):
             return True
         return False
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.predict_sql)
-        ret.results.target = execute_sql(self.db_path, self.sql)
+        ret.results.pred = None if validate_sql_query(self.db_path, ret.test_fixtures.predict_sql)["STATUS"] != "OK" else execute_sql(self.db_path, ret.test_fixtures.predict_sql)
+        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" else execute_sql(self.db_path, self.sql)
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
     
-    def _validate_test_fixture(self, response, history, pred=None):
+    def _validate_test_fixture(self, response, history):
+        def __output_format_check(response):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
+            if ("NL" not in response.keys() and "nl" not in response.keys()) and ("SQL" not in response.keys() and 'sql' not in response.keys()): 
+                raise ValidationError(
+                    f"Output format(key) check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `nl` or `sql`"
+                )
+            # normalize key name
+            if "NL" in response.keys(): response["nl"] = response.pop("NL")
+            if "SQL" in response.keys(): response["sql"] = response.pop("SQL")
+            return True
         def __response_history_compatible_check(response, history):
-            if any(h.nl_mutant == response for h in history):
+            if any(h.nl_mutant == response["nl"] for h in history):
                 raise ValidationError(f"Duplicate response (nl mutant) detected.")
             return True
-        def __sql_executable_check(pred, db_path):
-            res = validate_sql_query(db_path, pred)
+        def __sql_executable_check(response, db_path):
+            res = validate_sql_query(db_path, response["sql"])
             if res["STATUS"] != "OK":
                 raise ValidationError(
                         f"SQL executable check failed. "
                         f"Fail log from DBMS: {res['RESULT']}"
                     )
             return True
-        __response_history_compatible_check(response, history)
-        # mutanted SQL syntax check
-        if pred is not None: __sql_executable_check(pred, self.db_path)
+        __output_format_check(response)
+        if "sql" in response.keys(): __sql_executable_check(response, self.db_path)
+        else: __response_history_compatible_check(response, history)
         return True
     
     def _form_instance(self, idx, ret):
@@ -888,8 +918,6 @@ class SelfConsistencyTestClass(TestClass):
         if self.use_cache: return self._load_cached_test_cases()
 
         parser = get_parser(parser_name="nl_mutation_generation")
-        prompt2 = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
-        parser2 = get_parser(parser_name="nl2sql_translation")
         history, outputs = [], []
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
@@ -897,37 +925,46 @@ class SelfConsistencyTestClass(TestClass):
             while len(outputs) < self.num and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
-                prompt = get_prompt(
-                    template_name="nl_mutation_generation",
-                    history_string=__history_to_string(history) if history else None
-                )
-                response = self.backbone(prompt, parser, request_kwargs={
-                    "HINT": self.hint, 
-                    "QUESTION": self.nl
-                    }
-                )["NL"]
-                try:
-                    self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
-                except ValidationError as e:
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    retry += 1
-                    continue
-                # TODO change to be a unified interface that should be implemented for a given NL2SQL model
-                pred = self.model(prompt2, parser2, request_kwargs={
-                    "HINT": self.hint,
-                    "QUESTION": response
-                    }
-                )["SQL"]
-                try:
-                    self._validate_test_fixture(response, history, pred=pred)
-                except ValidationError as e:
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")    
-                    retry += 1
-                    continue
-                ret.test_fixtures.nl_mutant = response
-                ret.test_fixtures.predict_sql = pred
+                # Generate nl mutants and using the original sql as fake prediction
+                if not self.nl_mutants:
+                    prompt = get_prompt(
+                        template_name="nl_mutation_generation",
+                        history_string=__history_to_string(history) if history else None
+                    )
+                    response = self.backbone(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+                    try:
+                        self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
+                    except ValidationError as e:
+                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                        retry += 1
+                        continue
+                    # Temporarily save the generated NL mutants for future model ensemble use
+                    data_to_add = [{"db_id": self.db_id, "question": response["nl"], "query": self.sql}]
+                    if os.path.exists(self.nl_mutants_saved_path):
+                        with open(self.nl_mutants_saved_path) as f:
+                            try:
+                                data = json.load(f)
+                            except json.JSONDecodeError:
+                                data = []
+                    else:
+                        data = []
+                    data.extend(data_to_add)
+                    with open(self.nl_mutants_saved_path, "w") as f: json.dump(data, f, indent=4)
+                    response2 = {"sql": self.sql} # fake prediction
+                    try:
+                        self._validate_test_fixture(response2, history)
+                    except ValidationError as e:
+                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")    
+                        retry += 1
+                        continue
+                else:
+                    response = {"nl": self.nl_mutants[self.cnt]["question"]}
+                    response2 = {"sql": self.nl_mutants_sql_outputs[self.cnt]}
+                    self.cnt += 1
+                ret.test_fixtures.nl_mutant = response["nl"]
+                ret.test_fixtures.predict_sql = response2["sql"]
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
