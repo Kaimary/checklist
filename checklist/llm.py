@@ -57,6 +57,10 @@ CONFIGS: Dict[str, Dict[str, Any]] = {
         "constructor": ChatDeepSeek,
         "params": {"model": "deepseek-chat", "temperature": 0}
     }
+    # "deepseek-v3.1": {
+    #     "constructor": ChatOpenAI,
+    #     "params": {"model": "DeepSeek-V3.1", "temperature": 0}
+    # }
     # "claude-3-opus-20240229": {
     #     "constructor": ChatAnthropic,
     #     "params": {"model": "claude-3-opus-20240229", "temperature": 0}
@@ -116,6 +120,7 @@ class LLM:
                 prompt_text = prompt.invoke(request_kwargs).messages[0].content
                 # print(f"prompt: \n\n{prompt_text}\n\n")
                 raw_output = self.llm_chain.invoke(prompt_text)
+                # print(raw_output.content)
                 if isinstance(parser, JsonOutputParser): 
                     raw_output.content = re.sub(r'(?<!:)//.*', '', raw_output.content)
                     raw_output.content = re.sub(r'(?<=,\s)NULL\b', '"NULL"', raw_output.content)
