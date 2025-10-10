@@ -181,9 +181,8 @@ class DIF(AbstractTest):
                 model_list=(["resdsql", "codes7b", "codes15b", "dailsql", "llm:gpt-4o-mini-0708", "llm:gpt-4o-1120"] \
                             if "spider" in self.db_root_path else ["cscsql7b", "cscsql32b", "chess", "omnisql32b", "llm:gpt-4o-mini-0708", "llm:gpt-4o-1120"])
             ),
-            # SelfConsistencyTestClass(
-            #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, 
-            #     num=3, model=LLM(model_name="gpt-4o-mini-0708"))
+            SelfConsistencyTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]
 
 class EXP(AbstractTest):
