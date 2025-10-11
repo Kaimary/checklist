@@ -6,7 +6,7 @@ import json
 
 import numpy as np
 from .abstract_test import load_test, read_pred_file
-from .test_types import DIF, EXP, MFT, MTP, ORC, SEM
+from .test_types import DIF, EXP, MTP, ORC, SEM
 
 from .viewer.suite_summarizer import SuiteSummarizer
 
@@ -77,7 +77,6 @@ class TestSuite:
         if name in self.info:
             del self.info[name]
         type_map = {
-            MFT: 'MFT',
             SEM: 'SEM',
             MTP: 'MTP',
             DIF: 'DIF',

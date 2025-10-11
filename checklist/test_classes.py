@@ -1,4 +1,5 @@
 import os, re, json, random, copy, logging
+import numpy as np
 from munch import Munch
 from colorama import Fore, Style
 from camel.utils import print_text_animated
@@ -6,7 +7,6 @@ from camel.societies import RolePlaying
 from camel.models import ModelFactory
 from camel.configs import ChatGPTConfig
 from camel.types import ModelPlatformType, ModelType
-import numpy as np
 
 from checklist.spinner import Spinner
 from checklist.parsers import get_parser
@@ -23,6 +23,59 @@ from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sq
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
 from checklist.database_utils.db_info import get_db_schema_from_json
+
+class MinimumSyntaxTestClass(TestClass):
+    def __init__(self, **kwargs):
+        super().__init__("Minimum Syntax Test Class", "minimum_syntax", "syntax", key="sql", **kwargs)
+        self.test_cases = self._generator()
+    
+    def _test_fn(self, ret: Munch):
+        ret.results = Munch()
+        ret.results.status = ret.test_fixtures.status
+        ret.results.standard = "status is OK"
+        passed = ret.results.status == "OK"
+        return passed, ret.test_fixtures, ret.results
+    
+    def write_test_fixture_file(self, output_dir, **kwargs):
+        data = {
+            "sql": kwargs.get("sql"),
+            "status": kwargs.get("status")
+        }
+        output_path = os.path.join(output_dir, 'meta.json')
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        
+    def _form_instance(self, idx, ret):
+        """
+        Form each single test case, and save related test fixture for serialization. 
+        Format as: a list of `bugs`
+        
+        Parameters
+        ----------
+        ret: Dict with `data` and `result` keys
+        No return value
+        """
+        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
+        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
+        
+        # test case serialization
+        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, sql=self.sql, status=ret.test_fixtures.status)
+        
+        return ret
+    
+    def _generator(self):
+        if self.use_cache: return self._load_cached_test_cases()
+        
+        outputs = []
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        with spinner:
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            res = validate_sql_query(self.db_path, self.sql)
+            ret.test_fixtures.status = res['STATUS']
+            outputs.append(self._form_instance(len(outputs), ret))
+
+        return outputs
 
 class SemanticCheckTestClass(TestClass):
     def __init__(self, schema_file_path, **kwargs):
