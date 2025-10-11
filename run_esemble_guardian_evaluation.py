@@ -423,5 +423,6 @@ if __name__ == '__main__':
                   judgment_file_path=esemble_output_file_path, data_file_path=args.data_file_path, 
                   db_root_path=args.db_root_path, predicted_sql_path=args.predicted_sql_path)
     if not args.benchmark_name in ["spider", "bird"]:
-        run_nl2sql_bugs_evalution(judge_name=f"guardian({args.esemble_mode})", benchmark_name=args.benchmark_name,
-                  judgment_file_path=esemble_output_file_path, data_file_path=args.data_file_path, db_root_path=args.db_root_path)
+        run_nl2sql_bugs_evalution(judge_name=f"guardian({args.esemble_mode})", 
+                                  judgment_file_path=esemble_output_file_path, 
+                                  data_file_path=args.data_file_path, db_root_path=args.db_root_path)
