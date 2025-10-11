@@ -1,5 +1,3 @@
-from munch import Munch
-from checklist.llm import LLM
 from checklist.test_classes import CrossModelTestClass, NLReviewTestClass, OracleResultTestClass, NLRelaxTestClass, \
     NLStrengthenTestClass, SelfConsistencyTestClass, QueryReviewTestClass, SemanticCheckTestClass
 from .abstract_test import AbstractTest
@@ -180,10 +178,14 @@ class DIF(AbstractTest):
                 nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3, 
                 model_list=(["resdsql", "codes15b", "dailsql", "llm:deepseek-chat"] \
                             if "spider" in self.db_root_path else ["chess", "cscsql32b", "omnisql32b", "llm:deepseek-chat"])
-            ),
-            SelfConsistencyTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
+            )
         ]
+        if "spider" in self.db_root_path:
+            self.test_classes.append(
+                SelfConsistencyTestClass(
+                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3
+                )
+            )
 
 class EXP(AbstractTest):
     """
