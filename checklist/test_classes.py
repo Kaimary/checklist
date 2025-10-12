@@ -621,6 +621,7 @@ class NLStrengthenTestClass(TestClass):
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
+        if not orgin or not mutant: return False
         return len(orgin) >= len(mutant)
     
     def _test_fn(self, ret: Munch):
