@@ -500,13 +500,14 @@ class NLRelaxTestClass(TestClass):
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
+        if not orgin or not mutant: return False
         return len(orgin) <= len(mutant)
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         # ret.description = "Test the original SQL over a faked database with expected execution results"
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        ret.results.target = execute_sql(self.db_path, self.sql)
+        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" else execute_sql(self.db_path, self.sql)
         ret.results.standard = "len(pred) >= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
@@ -625,7 +626,7 @@ class NLStrengthenTestClass(TestClass):
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        ret.results.target = execute_sql(self.db_path, self.sql)
+        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] == "OK" else execute_sql(self.db_path, self.sql)
         ret.results.standard = "len(pred) <= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
