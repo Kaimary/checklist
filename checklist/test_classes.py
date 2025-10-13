@@ -303,6 +303,12 @@ class OracleResultTestClass(TestClass):
                 )
             return True
         def __schema_data_alignment_check(response, tables, column_types, schema):
+            def __normalize_sqlite_type(tp: str) -> str:
+                """Normalize SQLite type (case-insensitive, strip length, etc.)."""
+                tp = tp.upper().strip()
+                # Remove size qualifiers, e.g., VARCHAR(20) -> VARCHAR
+                tp = re.sub(r'\s*\(.*\)', '', tp)
+                return tp
             # table name validity check
             tables_in_data = response["database_instances"].keys()
             for td in tables_in_data:
@@ -321,7 +327,9 @@ class OracleResultTestClass(TestClass):
                 'BLOB': bytes,
                 'NUMERIC': float,
                 'DATE': str,
-                'DATETIME': str
+                'DATETIME': str,
+                'bool': bool,
+                "VARCHAR": str
             }
             data = response["database_instances"]
             for t, rows in data.items():
@@ -334,7 +342,9 @@ class OracleResultTestClass(TestClass):
                     )
                 
                 for v, tp in zip(rows[0], column_types[t]):
-                    expected_type = sqlite_type_map[tp]
+                    # print(tp)
+                    normalized = __normalize_sqlite_type(tp)
+                    expected_type = sqlite_type_map.get(normalized, str)
                     try:
                         expected_type(v)
                     except (ValueError, TypeError):
