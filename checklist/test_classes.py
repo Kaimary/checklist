@@ -250,7 +250,7 @@ class OracleResultTestClass(TestClass):
             for column_def in definitions:
                 column_def = column_def.strip()
                 if "primary key" in column_def.lower():
-                    column_name_match = re.match(r"`([^`]+)`|(\w+)", column_def)
+                    column_name_match = re.match(r'(["\'])(.*?)\1|(`)(.*?)`|(\w+)', column_def)
                     pk_column_name = (column_name_match.group(1) or column_name_match.group(2)).strip()
                     if pk_column_name not in response[table_name]:
                         # assuming the primary key column is the first column
