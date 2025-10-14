@@ -33,9 +33,9 @@ class SEM(AbstractTest):
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             MinimumSyntaxTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path),
-            # SemanticCheckTestClass(
-            #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path
-            # )
+            SemanticCheckTestClass(
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path
+            )
         ]
 
 class ORC(AbstractTest):
@@ -67,7 +67,7 @@ class ORC(AbstractTest):
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             OracleResultTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, criteria=0.6, num=3)
         ]
 
 class MTP(AbstractTest):
@@ -100,13 +100,7 @@ class MTP(AbstractTest):
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             NLRelaxTestClass(
-                nl=self.nl, 
-                hint=self.hint, 
-                sql=self.pred, 
-                db_id=self.db_id, 
-                db_root_path=self.db_root_path,
-                num=3
-            ),
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3),
             NLStrengthenTestClass(
                 nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]
@@ -149,7 +143,7 @@ class DIF(AbstractTest):
         if "spider" in self.db_root_path:
             self.test_classes.append(
                 SelfConsistencyTestClass(
-                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3
+                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, criteria=0.3, num=3
                 )
             )
 
