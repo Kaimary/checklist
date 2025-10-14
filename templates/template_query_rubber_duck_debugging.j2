@@ -1,16 +1,21 @@
-You are presented with a database schema:
+Using the Rubber Duck Debugging method to validate the correctness of a SQL query given a natural language (NL) query and database clause by clause.
+For each clause, check if it aligns with the NL query's intent.
+
+Here is the input:
+
+Database Schema:
 ###
 {{DATABASE_SCHEMA}}
 
-a natural language question with a hint (if available):
+NL question with a hint (if available):
 ###
 {{QUESTION}}
 
-Hint: {{HINT}}
+Hint: 
+{{HINT}}
 
-and a SQL query:
+SQL query:
 ###
 {{SQL}}
 
-Read and understand the schema and the NL question. Using Rubber Duck Debugging to verify the correctness of the provided SQL query clause by clause. 
-For each clause, explain its purpose and how it relates to the NL question. Keep the explanation concise and focused on the key points.
+Ensure the process completes in fewer than {{RANDOMNESS1}} turns, and the chain-of-thoughts in each turn is less than {{RANDOMNESS2}} words.

@@ -1088,7 +1088,9 @@ class QueryReviewTestClass(TestClass):
         task_prompt = prompt.invoke({
             "QUESTION": self.nl,
             "HINT": self.hint,
-            "SQL": self.sql
+            "SQL": self.sql,
+            "RANDOMNESS1": str(random.randint(3, 6)),
+            "RANDOMNESS2": str(random.randint(15, 40))
             }
         ).messages[0].content
         # prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
@@ -1105,47 +1107,49 @@ class QueryReviewTestClass(TestClass):
             with_task_specify=False,
             #   task_specify_agent_kwargs=dict(model=model),
         )
-
-        # # Print initial system messages
-        # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
-        # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
-        # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
-        # print(
-        #     Fore.CYAN
-        #     + "Specified task prompt:"
-        #     + f"\\n{role_play_session.specified_task_prompt}\\n"
-        #     + Style.RESET_ALL
-        # )
-        # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
-        n = 0
-        chat_turn_limit = 10
-        input_msg = role_play_session.init_chat()
-        turns = []
-        # Turn-based simulation
-        while n < chat_turn_limit:
-            n += 1
-            assistant_response, user_response = role_play_session.step(input_msg)
-            if assistant_response.terminated:
-                print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
-                break
-            if user_response.terminated:
-                print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
-                break
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        with spinner:
+            while len(outputs) < self.num:
+                # # Print initial system messages
+                # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
+                # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
+                # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
+                # print(
+                #     Fore.CYAN
+                #     + "Specified task prompt:"
+                #     + f"\\n{role_play_session.specified_task_prompt}\\n"
+                #     + Style.RESET_ALL
+                # )
+                # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
+                n = 0
+                chat_turn_limit = 10
+                input_msg = role_play_session.init_chat()
+                turns = []
+                # Turn-based simulation
+                while n < chat_turn_limit:
+                    n += 1
+                    assistant_response, user_response = role_play_session.step(input_msg)
+                    if assistant_response.terminated:
+                        print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
+                        break
+                    if user_response.terminated:
+                        print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
+                        break
+                    
+                    # Disable printing animation as it really slows down the test
+                    # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+                    # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+                    
+                    parsed_response = {
+                        "user_msg": user_response.msg.content,
+                        **json.loads(assistant_response.msg.content.strip())
+                    }
+                    if "CAMEL_TASK_DONE" in user_response.msg.content: break
+                    turns.append(parsed_response)
+                    input_msg = assistant_response.msg
             
-            # Disable printing animation as it really slows down the test
-            # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-            # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-            
-            parsed_response = {
-                "user_msg": user_response.msg.content,
-                **json.loads(assistant_response.msg.content.strip())
-            }
-            if "CAMEL_TASK_DONE" in user_response.msg.content: break
-            turns.append(parsed_response)
-            input_msg = assistant_response.msg
-    
-        ret.test_fixtures.turns = turns
-        outputs.append(self._form_instance(len(outputs), ret))
+                ret.test_fixtures.turns = turns
+                outputs.append(self._form_instance(len(outputs), ret))
 
         return outputs
 
@@ -1198,7 +1202,10 @@ class NLReviewTestClass(TestClass):
         prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
         task_prompt = prompt.invoke({
             "QUESTION": self.nl,
-            "SQL": self.sql
+            "HINT": self.hint,
+            "SQL": self.sql,
+            "RANDOMNESS1": str(random.randint(2, 5)),
+            "RANDOMNESS2": str(random.randint(15, 40))
             }
         ).messages[0].content
         # prompt = ("Using Rubber Duck Debugging to verify the correctness of the below natural language question phrase by phrase\n"
@@ -1218,34 +1225,37 @@ class NLReviewTestClass(TestClass):
             #   task_specify_agent_kwargs=dict(model=model),
         )
         
-        n = 0
-        chat_turn_limit = 10
-        turns = []
-        input_msg = role_play_session.init_chat()
-        # Turn-based simulation
-        while n < chat_turn_limit:
-            n += 1
-            assistant_response, user_response = role_play_session.step(input_msg)
-            if assistant_response.terminated:
-                print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
-                break
-            if user_response.terminated:
-                print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
-                break
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        with spinner:
+            while len(outputs) < self.num:
+                n = 0
+                chat_turn_limit = 10
+                turns = []
+                input_msg = role_play_session.init_chat()
+                # Turn-based simulation
+                while n < chat_turn_limit:
+                    n += 1
+                    assistant_response, user_response = role_play_session.step(input_msg)
+                    if assistant_response.terminated:
+                        print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
+                        break
+                    if user_response.terminated:
+                        print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
+                        break
 
-            # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-            # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-            
-            parsed_response = {
-                "user_msg": user_response.msg.content,
-                **json.loads(assistant_response.msg.content.strip())
-            }
-            turns.append(parsed_response)
-            if "CAMEL_TASK_DONE" in user_response.msg.content: break
-            
-            input_msg = assistant_response.msg
-        
-        ret.test_fixtures.turns = turns
-        outputs.append(self._form_instance(len(outputs), ret))
+                    # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+                    # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+                    
+                    parsed_response = {
+                        "user_msg": user_response.msg.content,
+                        **json.loads(assistant_response.msg.content.strip())
+                    }
+                    turns.append(parsed_response)
+                    if "CAMEL_TASK_DONE" in user_response.msg.content: break
+                    
+                    input_msg = assistant_response.msg
+                
+                ret.test_fixtures.turns = turns
+                outputs.append(self._form_instance(len(outputs), ret))
         
         return outputs
