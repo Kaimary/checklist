@@ -755,7 +755,7 @@ class NLStrengthenTestClass(TestClass):
                     retry += 1
                     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    invalids.add(response["sql_mutant"])
+                    if isinstance(response, dict) and "sql_mutant" in response.keys(): invalids.add(response["sql_mutant"])
                     continue
                 ret.type = response["type"]
                 ret.desc = response["description"]
