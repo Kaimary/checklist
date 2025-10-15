@@ -9,11 +9,8 @@ Database Schema
 ###
 {{DATABASE_SCHEMA}}
 
-This schema offers an in-depth description of the database's architecture, detailing tables, columns, primary keys, foreign keys, and any pertinent information regarding relationships or constraints. Special attention should be given to the examples listed beside each column, as they directly hint at which columns are relevant to our query.
-
-
+NL Question:
 ###
-Question: 
 {{QUESTION}}
 
 Hint:
@@ -40,6 +37,10 @@ Return a single JSON object with this exact structure (keys and string values **
     }
 }
 {% endraw %}
+
+Guidance for the output:
+- Ensure the database_instances are internally consistent
+- Make sure the columns in the resulting_data must be derived from the schema.
 
 {% if HISTORY %}
 Below are previously simulated database instances:

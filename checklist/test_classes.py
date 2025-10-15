@@ -178,7 +178,8 @@ class OracleResultTestClass(TestClass):
                 )
                 try:
                     self._validate_pruned_schema(response)
-                    self.schema = response    
+                    self.schema = response
+                    # print(response)
                     self.schema_pruned = True
                     break
                 except ValidationError as e:
@@ -229,6 +230,25 @@ class OracleResultTestClass(TestClass):
         return passed, ret.test_fixtures, ret.results
     
     def _validate_pruned_schema(self, response):
+        def __extract_column_name(column_def):
+            # Pattern to match: quoted strings or plain words
+            pattern = r'''
+                (["'])(.*?)\1 |  # Double/single quoted strings
+                (`)(.*?)`      |  # Backtick quoted strings  
+                (\w+)             # Plain words
+            '''
+            
+            match = re.search(pattern, column_def, re.VERBOSE)
+            if match:
+                # Find which group actually matched
+                if match.group(1):  # Double/single quotes
+                    return match.group(2)
+                elif match.group(3):  # Backticks
+                    return match.group(4)
+                elif match.group(5):  # Plain word
+                    return match.group(5)
+            return None
+
         schema_generator = DatabaseSchemaGenerator(
             tentative_schema=DatabaseSchema.from_schema_dict(response), 
             db_id=self.db_id,
@@ -253,38 +273,13 @@ class OracleResultTestClass(TestClass):
             for column_def in definitions:
                 column_def = column_def.strip()
                 if "primary key" in column_def.lower():
-                    column_name_match = re.match(r'(["\'])(.*?)\1|(`)(.*?)`|(\w+)', column_def)
-                    pk_column_name = (column_name_match.group(1) or column_name_match.group(2)).strip()
+                    pk_column_name = __extract_column_name(column_def)
                     if pk_column_name not in response[table_name]:
                         # assuming the primary key column is the first column
                         response[table_name].insert(0, pk_column_name)
             return True                 
 
     def _validate_test_fixture(self, response, history):
-        """Validate the correctness (check if the schema matches, and the types match) of the output from LLM
-
-        Parameters
-        ----------
-        """
-        def __extract_column_types_from_schema_string(schema_string):
-            res = {}
-            ddl_regex = re.compile(r"CREATE TABLE.*?\);", re.DOTALL | re.IGNORECASE)
-            ddl_commands = ddl_regex.findall(schema_string)
-            for ddl_command in ddl_commands:
-                create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
-                table_name = create_table_match.group(1).strip()
-                column_definitions = create_table_match.group(2).strip()
-                definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
-                type_regex = re.compile(r'.*\b(TEXT|INTEGER|REAL|NUMERIC|BLOB|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
-                types = []
-                for column_def in definitions:
-                    column_def = column_def.strip()
-                    if 'foreign key' in column_def.lower(): continue
-                    match = type_regex.search(column_def)
-                    if match:
-                        types.append(match.group(1).upper())
-                res[table_name] = types
-            return res
         def __output_format_check(response):
             if not isinstance(response, dict):
                 raise ValidationError(
@@ -305,6 +300,36 @@ class OracleResultTestClass(TestClass):
                     f"Expected keys: `unknown` or `columns` and `rows`"
                 )
             return True
+        def __extract_column_types_from_schema_string(schema_string):
+            res = {}
+            ddl_regex = re.compile(r"CREATE TABLE.*?\);", re.DOTALL | re.IGNORECASE)
+            ddl_commands = ddl_regex.findall(schema_string)
+            for ddl_command in ddl_commands:
+                create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+                table_name = create_table_match.group(1).strip()
+                column_definitions = create_table_match.group(2).strip()
+                definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
+                type_regex = re.compile(r'.*\b(TEXT|INTEGER|REAL|NUMERIC|BLOB|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
+                types = []
+                for column_def in definitions:
+                    column_def = column_def.strip()
+                    if 'foreign key' in column_def.lower(): continue
+                    match = type_regex.search(column_def)
+                    if match:
+                        types.append(match.group(1).upper())
+                res[table_name] = types
+            return res
+        def __resulting_schema_check(response, schema_dict):
+            all_columns = []
+            for columns in schema_dict.values():
+                all_columns.extend(columns)
+
+            if any(c not in all_columns for c in response["resulting_data"]["columns"]):
+                raise ValidationError(
+                    f"Resulting schema check failed. "
+                    f"Resulting schema: {', '.join(response['resulting_data']['columns'])}"
+                )
+            return
         def __schema_data_alignment_check(response, tables, column_types, schema):
             def __normalize_sqlite_type(tp: str) -> str:
                 """Normalize SQLite type (case-insensitive, strip length, etc.)."""
@@ -404,6 +429,7 @@ class OracleResultTestClass(TestClass):
         
         # output format check
         __output_format_check(response)
+        __resulting_schema_check(response, self.schema if self.schema_pruned else DatabaseManager().get_db_schema())
         # schema-data alignment check
         table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
         column_types= DatabaseManager().get_all_column_types() \
@@ -504,6 +530,7 @@ class OracleResultTestClass(TestClass):
                 logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
+                # print(response)
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
