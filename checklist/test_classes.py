@@ -645,9 +645,8 @@ class NLRelaxTestClass(TestClass):
         return outputs
 
 class NLStrengthenTestClass(TestClass):
-    def __init__(self, schema_file_path, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__("Natural Language Strengthening Test Class", "nl_strengthen", "metamorphic", **kwargs)
-        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
