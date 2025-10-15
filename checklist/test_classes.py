@@ -514,6 +514,7 @@ class NLRelaxTestClass(TestClass):
 
     def _compare_query_results(self, orgin, mutant):
         if not orgin or not mutant: return False
+        # print(len(mutant))
         return len(orgin) <= len(mutant)
     
     def _test_fn(self, ret: Munch):
@@ -589,6 +590,11 @@ class NLRelaxTestClass(TestClass):
         
         if self.use_cache: return self._load_cached_test_cases()
 
+        # parsed_query = None
+        # try:
+        #     parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+        # except Exception as e:
+        #     print(e)
         parser = get_parser(parser_name="nl_relaxing_generation")
         history, outputs = [], []
         invalids = set()
@@ -625,6 +631,7 @@ class NLRelaxTestClass(TestClass):
                 ret.test_fixtures.sql_mutant = response["sql_mutant"] 
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
+                # print(f"nl:{self.nl}\nsql:{self.sql}\nresponse:{response}")
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
@@ -1081,35 +1088,38 @@ class QueryReviewTestClass(TestClass):
     def _generator(self):
         if self.use_cache: return self._load_cached_test_cases()
 
+        clauses = []
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            clauses = parsed_query.clauses.keys()
+        except Exception as e:
+            print(e)
+        
         outputs = []
         ret = Munch()
         ret.test_fixtures = Munch()
         prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
-        task_prompt = prompt.invoke({
-            "QUESTION": self.nl,
-            "HINT": self.hint,
-            "SQL": self.sql,
-            "RANDOMNESS1": str(random.randint(3, 6)),
-            "RANDOMNESS2": str(random.randint(15, 40))
-            }
-        ).messages[0].content
-        # prompt = ("Using Rubber Duck Debugging to verify the correctness of the SQL query clause by clause\n"
-        #     f"{self.sql}"
-        #     f"for natural language question \"{self.nl}\" under the database schema\n"
-        #     f"{self.schema_string}"
-        # )
-        role_play_session = RolePlaying(
-            assistant_role_name="SQL Developer",
-            assistant_agent_kwargs=dict(model=self.backbone),
-            user_role_name="Rubber Duck Debugging Assistant",
-            user_agent_kwargs=dict(model=self.backbone),
-            task_prompt=task_prompt,
-            with_task_specify=False,
-            #   task_specify_agent_kwargs=dict(model=model),
-        )
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num:
+                random.shuffle(clauses)
+                task_prompt = prompt.invoke({
+                    "QUESTION": self.nl,
+                    "HINT": self.hint,
+                    "SQL": self.sql,
+                    "CLAUSES": "- " + ", ".join(clauses) if clauses else "",
+                    "RANDOMNESS1": str(random.randint(3, 6)),
+                    "RANDOMNESS2": str(random.randint(15, 40))
+                    }
+                ).messages[0].content
+                role_play_session = RolePlaying(
+                    assistant_role_name="SQL Developer",
+                    assistant_agent_kwargs=dict(model=self.backbone),
+                    user_role_name="Rubber Duck Debugging Assistant",
+                    user_agent_kwargs=dict(model=self.backbone),
+                    task_prompt=task_prompt,
+                    with_task_specify=False
+                )
                 # # Print initial system messages
                 # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
                 # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
