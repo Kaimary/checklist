@@ -1,12 +1,13 @@
 You are a data science expert.
-Below, you are presented with a natural language (NL) question and a SQL query.
-Your task is to read and understand the NL question and its corresponding SQL query, and then define a metamorphic relation that relaxes both the NL question and the SQL query.
+Given a natural language (NL) question and its corresponding SQL query, your task is to find a metamorphic relation that relaxes both the NL question and the SQL query.
+
 By relax, we mean:
-- Removing or loosening an existing constraint present in both the NL and the SQL query;
-- After applying this relaxation, the output count of the transformed SQL query is expected not less than that of the original SQL query.
+- Removing or loosening exactly one existing constraint that appears in both the NL question and the SQL query;
+- The output of the relaxed query is expected to be a superset (i.e., not smaller) than the output of the original query;
+- If no shared constraint exists between the NL and SQL query, return "unknown".
 
 ###
-Question:
+NL Question:
 {{QUESTION}}
 
 Hint:
@@ -15,7 +16,15 @@ Hint:
 SQL:
 {{QUERY}}
 
-Please respond with a JSON object structured as follows:
+Please respond with a JSON object strictly following one of the two formats below:
+Case 1 - No shared constraint:
+{% raw %}
+{
+    "chain_of_thought_reasoning": "Explain why no common constraint was found.",
+    "type": "unknown"
+}
+{% endraw %}
+Case 2 - A shared constraint is found:
 {% raw %}
 {
     "chain_of_thought_reasoning": "Your thought process on how you think.",
@@ -25,6 +34,11 @@ Please respond with a JSON object structured as follows:
     "sql_mutant": "the query transformed from original SQL"
 }
 {% endraw %}
+
+Guidelines
+- Only modify one constraint.
+- Keep reasoning concise and technical (no storytelling).
+- If unsure whether a constraint is shared, choose "unknown".
 
 {% if HISTORY %}
 Below are previously generated metamorphic relations:

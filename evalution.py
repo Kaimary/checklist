@@ -57,15 +57,16 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
             elif difficulty == 'challenging': challenging_acc += 1
 
         if judgment['judgment'] and judgment_label == judgment['judgment']: TP += 1
-        elif not judgment['judgment'] and judgment_label != judgment['judgment']: 
-            # print(idx)
-            FN += 1
+        elif not judgment['judgment'] and judgment_label != judgment['judgment']: FN += 1
         elif judgment['judgment'] and judgment_label != judgment['judgment']: FP += 1
-        else: TN += 1
+        else: 
+            # print(idx)
+            # print(judgment)
+            TN += 1
     
     print(f"Evaluation Results of `{judge_name}` on `{benchmark_name}{f'+{nl2sql_model_name}' if nl2sql_model_name else ''}`:")
     print(f"Total Accuracy: {Acc/(len(judgments)-invalids)} ({Acc}/{len(judgments)-invalids})")
-    if simples > 0:
+    if all(x > 0 for x in [simples, moderates, challengings]):
         print(f"Simple-Difficulty Accuracy: {simple_acc/simples} ({simple_acc}/{simples})")
         print(f"Moderate-Difficulty Accuracy: {moderate_acc/moderates} ({moderate_acc}/{moderates})")
         print(f"Challenging-Difficulty Accuracy: {challenging_acc/challengings} ({challenging_acc}/{challengings})")

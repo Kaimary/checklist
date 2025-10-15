@@ -590,16 +590,20 @@ class NLRelaxTestClass(TestClass):
             )
         
         if self.use_cache: return self._load_cached_test_cases()
-        # Obtain query clauses for next debugging purpose
+
+        parser = get_parser(parser_name="nl_relaxing_generation")
+        history, outputs = [], []
+        # check query clauses and skip the test if constraint-relatd clauses (WHERE/ORDER/GROUP/IUE) are missing
         clauses = []
         try:
             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
             clauses = list(parsed_query.clauses.keys())
         except Exception as e:
             print(e)
-
-        parser = get_parser(parser_name="nl_relaxing_generation")
-        history, outputs = [], []
+        if not clauses or all(c not in clauses for c in [
+            "WHERE", "LIMIT", "HAVING", "INTERSECT", "INTERSECT ALL", "UNION", "UNION ALL", "EXCEPT", "EXCEPT ALL"]
+        ): return outputs
+        
         invalids = set()
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
@@ -619,6 +623,8 @@ class NLRelaxTestClass(TestClass):
                         "QUERY": self.sql
                     }
                 )
+                # no constraint found, skip directly
+                if isinstance(response, dict) and 'type' in response.keys() and response['type'] == 'unknown': break
                 try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e:
