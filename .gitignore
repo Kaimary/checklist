@@ -12,6 +12,7 @@ data/
 test_cases/
 logs/
 .env
+.env.new
 run_test.py
 camel_test.py
 extract_chess_results.py
