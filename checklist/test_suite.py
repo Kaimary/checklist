@@ -304,7 +304,7 @@ class TestSuite:
         for name, t in self.tests.items():
             if verbose: print(f'Running {name}')
             res = t.run1(verbose=verbose, **kwargs)
-            detection_results.append(res)
+            if isinstance(res, bool): detection_results.append(res)
             ret[name] = res
             ret[name + "_details"] = {
                 t.test_classes[idx].name: {
@@ -319,7 +319,7 @@ class TestSuite:
             if passed >=4 or failed >=2:
                 logging.warning("At least 2 tests have failed or four tests have passed, early stopping for efficiency.")
                 break
-        ret["judgment"] = any(detection_results)
+        ret["judgment"] = any(detection_results) if detection_results else "UNDETERMINED"
 
         return ret
             

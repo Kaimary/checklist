@@ -109,8 +109,9 @@ class TestClass(ABC):
             for k, v in result.items():
                 if k not in results: results[k] = []
                 results[k].append(v)
+        if not passes: detection_result = "UNDETERMINED"
         # Verify whether the number of passed test cases meets the criteria
-        detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
+        else: detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
         logging.info(f"Test Class `{self.name}` Total Test Cases: {len(passes)}, Passed: {np.sum(passes)}, Criteria: {self.criteria}")
 
         return np.array(passes), fixtures, results, detection_result, self.criteria

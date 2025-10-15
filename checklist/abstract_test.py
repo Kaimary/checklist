@@ -386,8 +386,9 @@ class AbstractTest(ABC):
             Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr, criteria=ctr)
             for pd, fs, rs, dr, ctr in (ut.run() for ut in self.test_classes)
         ]
-        return all(ut.detection_result == True for ut in self.results.test_classes)
-        
+        return all(tc.detection_result for tc in self.results.test_classes) \
+            if not all(tc.detection_result == "UNDETERMINED" for tc in self.results.test_classes) else "UNDETERMINED"
+
     def fail_idxs(self):
         self._check_results()
         return np.where(self.results.passed == False)[0]
