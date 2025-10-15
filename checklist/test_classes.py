@@ -508,8 +508,9 @@ class OracleResultTestClass(TestClass):
         return outputs
 
 class NLRelaxTestClass(TestClass):
-    def __init__(self, **kwargs):
+    def __init__(self, schema_file_path, **kwargs):
         super().__init__("Natural Language Relaxing Test Class", "nl_relax", "metamorphic", **kwargs)
+        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
@@ -589,12 +590,14 @@ class NLRelaxTestClass(TestClass):
             )
         
         if self.use_cache: return self._load_cached_test_cases()
+        # Obtain query clauses for next debugging purpose
+        clauses = []
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            clauses = list(parsed_query.clauses.keys())
+        except Exception as e:
+            print(e)
 
-        # parsed_query = None
-        # try:
-        #     parsed_query = Query(self.sql, copy.deepcopy(self.schema))
-        # except Exception as e:
-        #     print(e)
         parser = get_parser(parser_name="nl_relaxing_generation")
         history, outputs = [], []
         invalids = set()
@@ -636,8 +639,9 @@ class NLRelaxTestClass(TestClass):
         return outputs
 
 class NLStrengthenTestClass(TestClass):
-    def __init__(self, **kwargs):
+    def __init__(self, schema_file_path, **kwargs):
         super().__init__("Natural Language Strengthening Test Class", "nl_strengthen", "metamorphic", **kwargs)
+        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
@@ -710,6 +714,13 @@ class NLStrengthenTestClass(TestClass):
             )
         
         if self.use_cache: return self._load_cached_test_cases()
+        # Obtain query clauses for next debugging purpose
+        clauses = []
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            clauses = list(parsed_query.clauses.keys())
+        except Exception as e:
+            print(e)
 
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
@@ -1046,8 +1057,9 @@ class SelfConsistencyTestClass(TestClass):
         return outputs
 
 class QueryReviewTestClass(TestClass):
-    def __init__(self, **kwargs):
+    def __init__(self, schema_file_path, **kwargs):
         super().__init__("Step-through Query Review Test Class", "query_review", "explore", **kwargs)
+        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI,
@@ -1088,10 +1100,11 @@ class QueryReviewTestClass(TestClass):
     def _generator(self):
         if self.use_cache: return self._load_cached_test_cases()
 
+        # Obtain query clauses for next debugging purpose
         clauses = []
         try:
             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
-            clauses = parsed_query.clauses.keys()
+            clauses = list(parsed_query.clauses.keys())
         except Exception as e:
             print(e)
         
@@ -1210,34 +1223,25 @@ class NLReviewTestClass(TestClass):
         ret = Munch()
         ret.test_fixtures = Munch()
         prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
-        task_prompt = prompt.invoke({
-            "QUESTION": self.nl,
-            "HINT": self.hint,
-            "SQL": self.sql,
-            "RANDOMNESS1": str(random.randint(2, 5)),
-            "RANDOMNESS2": str(random.randint(15, 40))
-            }
-        ).messages[0].content
-        # prompt = ("Using Rubber Duck Debugging to verify the correctness of the below natural language question phrase by phrase\n"
-        #     f"{self.nl}"
-        #     f"against the SQL query\n"
-        #     f"{self.sql}"
-        #     "under the database schema:\n"
-        #     f"{self.schema_string}"
-        # )
-        role_play_session = RolePlaying(
-            assistant_role_name="SQL Developer",
-            assistant_agent_kwargs=dict(model=self.backbone),
-            user_role_name="Rubber Duck Debugging Assistant",
-            user_agent_kwargs=dict(model=self.backbone),
-            task_prompt=task_prompt,
-            with_task_specify=False,
-            #   task_specify_agent_kwargs=dict(model=model),
-        )
-        
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num:
+                task_prompt = prompt.invoke({
+                    "QUESTION": self.nl,
+                    "HINT": self.hint,
+                    "SQL": self.sql,
+                    "RANDOMNESS1": str(random.randint(2, 5)),
+                    "RANDOMNESS2": str(random.randint(15, 40))
+                    }
+                ).messages[0].content
+                role_play_session = RolePlaying(
+                    assistant_role_name="SQL Developer",
+                    assistant_agent_kwargs=dict(model=self.backbone),
+                    user_role_name="Rubber Duck Debugging Assistant",
+                    user_agent_kwargs=dict(model=self.backbone),
+                    task_prompt=task_prompt,
+                    with_task_specify=False
+                )
                 n = 0
                 chat_turn_limit = 10
                 turns = []
