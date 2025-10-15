@@ -667,6 +667,11 @@ class NLStrengthenTestClass(TestClass):
                 raise ValidationError(f"Duplicate response (nl/sql mutant) detected.")
             return True
         def __sql_executable_check(response, db_path):
+            if not isinstance(response, dict) or "sql_mutant" not in response:
+                raise ValidationError(
+                        f"SQL executable check failed. "
+                        f"Required key missing 'sql_mutant'"
+                    )
             res = validate_sql_query(db_path, response["sql_mutant"])
             if res["STATUS"] != "OK":
                 raise ValidationError(
@@ -674,6 +679,7 @@ class NLStrengthenTestClass(TestClass):
                         f"Fail log from DBMS: {res['RESULT']}"
                     )
             return True
+        
         # mutanted SQL syntax check
         __sql_executable_check(response, self.db_path)
         # response duplication check
