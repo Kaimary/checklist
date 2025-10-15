@@ -720,13 +720,6 @@ class NLStrengthenTestClass(TestClass):
             )
         
         if self.use_cache: return self._load_cached_test_cases()
-        # Obtain query clauses for next debugging purpose
-        clauses = []
-        try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
-            clauses = list(parsed_query.clauses.keys())
-        except Exception as e:
-            print(e)
 
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
@@ -749,6 +742,8 @@ class NLStrengthenTestClass(TestClass):
                         "QUERY": self.sql
                     }
                 )
+                # no constraint found, skip directly
+                if isinstance(response, dict) and 'type' in response.keys() and response['type'] == 'unknown': break
                 try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e:

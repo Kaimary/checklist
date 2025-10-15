@@ -178,6 +178,6 @@ class EXP(AbstractTest):
         self.schema_file_path = kwargs.get("schema_file_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            QueryReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, num=3),
-            NLReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
+            QueryReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, num=1),
+            NLReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=1)
         ]
