@@ -4,7 +4,13 @@ Your task is to:
 - Read and understand the schema and the natural language question.
 - Identify all tables and columns that could be relevant to answering the question.
 - Prune the schema to retain relevant tables and columns. 
-- The pruning should be MINIMAL — remove only what is clearly unnecessary. If there is any uncertainty, prefer keeping more rather than less.
+- The pruning should be MINIMAL 
+    — Rremove only columns/tables that are clearly unnecessary. When in doubt, keep them.
+    {% if COLUMNS %}
+    - We found some columns may be relavant with the question, put them into your simulation if possible:
+    {{COLUMNS}}
+    {% endif %}
+    - Important: If a table has a primary/foreign key (or any declared unique identifier), that column must be kept in the pruned schema.
 
 Database Schema
 ###

@@ -18,9 +18,9 @@ class TestSuite:
         self.print_fn = print_fn
         self.test_ranges = {}
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None, debug=None):
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         for t in self.tests.values():
-            t.set(nl=nl, hint=hint, pred=pred, db_id=db_id, db_root_path=db_root_path, schema_file_path=schema_file_path, pred_match_gold=pred_match_gold, debug=debug)
+            t.set(nl=nl, hint=hint, pred=pred, db_id=db_id, db_root_path=db_root_path, schema_file_path=schema_file_path, pred_match_gold=pred_match_gold)
 
     @staticmethod
     def from_file(path):

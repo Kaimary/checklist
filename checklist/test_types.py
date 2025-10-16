@@ -66,10 +66,9 @@ class ORC(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.schema_file_path = kwargs.get("schema_file_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
-        self.debug = kwargs.get("debug", None)
         self.test_classes = [
             OracleResultTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, criteria=0.6, num=3, debug=self.debug)
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, criteria=0.6, num=3)
         ]
 
 class MTP(AbstractTest):
@@ -101,12 +100,11 @@ class MTP(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.schema_file_path = kwargs.get("schema_file_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
-        self.debug = kwargs.get("debug", None)
         self.test_classes = [
             # NLRelaxTestClass(
-            #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, num=3, debug=self.debug),
+            #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, num=3),
             NLStrengthenTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3, debug=self.debug)
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]
         
 class DIF(AbstractTest):
@@ -137,10 +135,9 @@ class DIF(AbstractTest):
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
-        self.debug = kwargs.get("debug", None)
         self.test_classes = [
             CrossModelTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3, debug=self.debug,
+                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3,
                 model_list=(["resdsql", "codes15b", "dailsql", "llm:deepseek-chat"] \
                             if "spider" in self.db_root_path else ["chess", "cscsql32b", "omnisql32b", "llm:deepseek-chat"]),
             )
@@ -148,7 +145,7 @@ class DIF(AbstractTest):
         if "spider" in self.db_root_path:
             self.test_classes.append(
                 SelfConsistencyTestClass(
-                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, criteria=0.3, num=3, debug=self.debug
+                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, criteria=0.3, num=3
                 )
             )
 
@@ -181,8 +178,7 @@ class EXP(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.schema_file_path = kwargs.get("schema_file_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
-        self.debug = kwargs.get("debug", None)
         self.test_classes = [
-            QueryReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, num=1, debug=self.debug),
-            NLReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=1, debug=self.debug)
+            QueryReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, schema_file_path=self.schema_file_path, num=1),
+            NLReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=1)
         ]

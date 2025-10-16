@@ -161,6 +161,16 @@ class OracleResultTestClass(TestClass):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl", **kwargs)
 
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
+        # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
+        # If exists, prompt LLM to make sure required columns/values existed.
+        self.matches = {}
+        try:
+            self.red_schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
+            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
+            self.matches = parsed_query.check_conditions()
+        except Exception as e:
+            print(e)
+
         self.schema_pruned = False
         # Prune the `lenthy` schema first, to ensure the quality of generated data 
         if any(len(cols) > prunned_threshold for cols in self.schema.values()):
@@ -169,7 +179,10 @@ class OracleResultTestClass(TestClass):
             error = set() # Append the error messages to avoid endless llm loop
             parser = get_parser(parser_name="schema_pruning")
             while True and retry < self.max_retry:
-                prompt = get_prompt(template_name="schema_pruning", error_string='\n'.join(error) if error else None)
+                prompt = get_prompt(
+                    template_name="schema_pruning", 
+                    columns_string=', '.join(self.matches.keys()) if self.matches else None,
+                    error_string='\n'.join(error) if error else None)
                 response = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl,
@@ -179,7 +192,7 @@ class OracleResultTestClass(TestClass):
                 try:
                     self._validate_pruned_schema(response)
                     self.schema = response
-                    # print(f"Pruned schema: {response}")
+                    logging.info(f"Pruned schema: {response}")
                     self.schema_pruned = True
                     break
                 except ValidationError as e:
@@ -196,7 +209,6 @@ class OracleResultTestClass(TestClass):
             include_value_description=True
         )
         self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
-        self.red_schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
@@ -441,7 +453,7 @@ class OracleResultTestClass(TestClass):
                 if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
             __schema_data_alignment_check(response, table_names, column_types, self.schema)
         # response duplication check
-        __response_history_compatible_check(response, history)
+        else: __response_history_compatible_check(response, history)
        
     def _form_instance(self, idx, ret):
         """
@@ -484,14 +496,6 @@ class OracleResultTestClass(TestClass):
                 for col, vals in col2vals.items()
             )
         if self.use_cache: return self._load_cached_test_cases()
-        # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
-        # If exists, prompt LLM to put these values into the simulated database to make sure exact match
-        matched_values = []
-        try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
-            matched_values = parsed_query.check_conditions()
-        except Exception as e:
-            print(e)
         
         parser = get_parser(parser_name="oracle_data_generation")
         parser2 = get_parser(parser_name="oracle_data_verification")
@@ -505,7 +509,7 @@ class OracleResultTestClass(TestClass):
                 prompt = get_prompt(
                     template_name="oracle_data_generation", 
                     schema_string=self.schema_string,
-                    matched_values=__values_to_string(matched_values) if matched_values else None,
+                    columns_values_string=__values_to_string(self.matches) if self.matches else None,
                     history_string=__history_to_string(history) if history else None
                 )
                 response = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
@@ -535,11 +539,10 @@ class OracleResultTestClass(TestClass):
                     continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
-                # print(f"database instances: {response['database_instances']}\nexplanation: {response2['explanation']}\nresulting_data:{response2['resulting_data']}")
+                logging.info(f"database instances: {response['database_instances']}\nexplanation: {response2['explanation']}\nresulting_data:{response2['resulting_data']}")
                 logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-                # print(response)
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 

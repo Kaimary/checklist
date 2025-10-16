@@ -1426,6 +1426,7 @@ class WhereClause(Clause):
     def check(self):
         matched_values = defaultdict(list)
         for predicate in self.predicates.ops:
+            if isinstance(predicate, str): continue
             if predicate._cmp == "=":
                 op1 = predicate.ops[0]
                 op2 = predicate.ops[1]

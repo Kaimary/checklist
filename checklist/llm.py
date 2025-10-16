@@ -118,14 +118,14 @@ class LLM:
         for attempt in range(max_attempts):
             try:
                 prompt_text = prompt.invoke(request_kwargs).messages[0].content
-                # print(f"prompt: \n\n{prompt_text}\n\n")
+                logging.debug(f"prompt: \n\n{prompt_text}\n\n")
                 raw_output = self.llm_chain.invoke(prompt_text)
-                # print(raw_output.content)
+                logging.debug(raw_output.content)
                 if isinstance(parser, JsonOutputParser): 
                     raw_output.content = re.sub(r'(?<!:)//.*', '', raw_output.content)
                     raw_output.content = re.sub(r'(?<=,\s)NULL\b', '"NULL"', raw_output.content)
                 output = parser.invoke(raw_output)
-                logging.info(f"`{self.llm_chain.model_name}` model response: \"{raw_output.content}\"\n"
+                logging.debug(f"`{self.llm_chain.model_name}` model response: \"{raw_output.content}\"\n"
                         f"\t- out tokens: {raw_output.response_metadata['token_usage']['completion_tokens']}\n"
                         f"\t- prompt tokens: {raw_output.response_metadata['token_usage']['prompt_tokens']}\n"
                         f"\t- total tokens: {raw_output.response_metadata['token_usage']['total_tokens']}")

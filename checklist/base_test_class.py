@@ -49,7 +49,7 @@ class SchemaCache:
 
 class TestClass(ABC):
     def __init__(self, name, abbrev_name, abbrev_type, nl, hint, sql, db_id, db_root_path, key="nl+sql",
-                 backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0, use_cache=False, debug=None):
+                 backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0, use_cache=False):
         self.name = name
 
         self.nl=nl
@@ -69,7 +69,6 @@ class TestClass(ABC):
         self.num = num
         self.use_cache=use_cache
         self.criteria = criteria
-        self.debug=debug
 
         self.test_cases = []
         self.max_retry = self.num * 2

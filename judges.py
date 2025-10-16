@@ -17,7 +17,7 @@ class LLMJudge(AbstractJudge):
         self.model = LLM(model_name=model_name)
         self.enable_few_shot = enable_few_shot
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None, debug=None):
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         self.nl = nl
         self.hint = hint
         self.pred = pred
@@ -61,7 +61,7 @@ class GuardianJudge(AbstractJudge):
             test_instance = test()  # Create an instance of the test class
             self.suite.add(test_instance, name=f"{test.__name__} Test", capability=f"{test.__name__.lower()}", description=f"{test.__name__} test for SQL correctness")
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None, debug=None):
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         self.suite.set(
             nl=nl,
             hint=hint,
@@ -69,8 +69,7 @@ class GuardianJudge(AbstractJudge):
             db_id=db_id,
             db_root_path=db_root_path,
             schema_file_path=schema_file_path,
-            pred_match_gold=pred_match_gold,
-            debug=debug
+            pred_match_gold=pred_match_gold
         )
 
     def run(self):
