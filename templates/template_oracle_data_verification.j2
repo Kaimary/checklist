@@ -20,27 +20,20 @@ Hint:
 ###
 {{HINT}}
 
-Return a JSON object with this exact structure:
+Return a single JSON object with this exact structure (keys and string values **must** use double quotes `"` — never single quotes `'`):
 {% raw %}
 {
-    "explanation": "A concise, non-sensitive explanation (2–4 sentences) describing the method and, if applicable, the exact mathematical expressions used to obtain the result — including the relevant tables and columns, applied filters, and any aggregation operations (e.g., MAX).",
+    "explanation": "A concise, non-sensitive explanation (2–4 sentences) describing the method and, if applicable, the exact mathematical expressions used to obtain the result — including the relevant columns and resulted data rows.",
     "resulting_data": {
         "columns": ["table.column1", ...],
         "rows": [
-            ["value1", ...],
+            ["value_row1_col1", ...],
             ...
         ]
     }
 }
 {% endraw %}
-
-If the query returns no rows, Return a JSON object with the following structure:
-{% raw %}
-{
-    "explanation": "A brief explanation why no rows match.",
-    "resulting_data": {"unknown": ""}
-}
-{% endraw %}
-
+Make sure the keys `"columns"` and `"rows"` **must always** be included under `"resulting_data"`, even if empty.
+If no rows match, return `"rows": []` (but still include `"columns"`).
 
 Take a deep breath and think step by step. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

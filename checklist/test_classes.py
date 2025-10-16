@@ -280,7 +280,7 @@ class OracleResultTestClass(TestClass):
                         response[table_name].insert(0, pk_column_name)
             return True                 
 
-    def _validate_test_fixture(self, response, history, key="database_instances"):
+    def _validate_test_fixture(self, response, history, key="database_instances", instances=None):
         def __output_format_check(response, key):
             if not isinstance(response, dict):
                 raise ValidationError(
@@ -290,17 +290,18 @@ class OracleResultTestClass(TestClass):
                 )
             # quick fix (hard-code) before checking
             if "columns" in response.keys() and "rows" in response.keys(): response = {"resulting_data": response}
+            if key == "resulting_data": response["database_instances"] = instances
             if key not in response.keys():
                 raise ValidationError(
                     f"Output format(key) check failed. "
                     f"Keys found in response: {','.join(response.keys())}, "
                     f"Expected keys: `{key}`"
                 )
-            if key == "resulting_data" and ("unknown" not in response["resulting_data"].keys() and (any(k not in response["resulting_data"].keys() for k in ["columns", "rows"]))): 
+            if key == "resulting_data" and any(k not in response["resulting_data"].keys() for k in ["columns", "rows"]): 
                 raise ValidationError(
                     f"Output format(key in key) check failed. "
                     f"Keys found in `resulting_data`: {','.join(response['resulting_data'].keys())}, "
-                    f"Expected keys: `unknown` or `columns` and `rows`"
+                    f"Expected keys: `columns` and `rows`"
                 )
             return True
         def __extract_column_types_from_schema_string(schema_string):
@@ -526,8 +527,7 @@ class OracleResultTestClass(TestClass):
                     }
                 )
                 try:
-                    response2["database_instances"] = response["database_instances"]
-                    self._validate_test_fixture(response2, history, key="resulting_data")
+                    self._validate_test_fixture(response2, history, key="resulting_data", instances=response["database_instances"])
                 except ValidationError as e:
                     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
@@ -535,7 +535,7 @@ class OracleResultTestClass(TestClass):
                     continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
-                # print(f"database instances: {response['database_instances']}\nchain-of-the-thought: {response2['explanation']}\nresulting_data:{response2['resulting_data']}")
+                # print(f"database instances: {response['database_instances']}\nexplanation: {response2['explanation']}\nresulting_data:{response2['resulting_data']}")
                 logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
