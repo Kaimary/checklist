@@ -26,7 +26,7 @@ def load_template(template_name: str) -> str:
     try:
         with open(template_path, "r") as file:
             template = file.read()
-        logging.info(f"Template {template_name} loaded successfully.")
+        logging.debug(f"Template {template_name} loaded successfully.")
         return template
     except FileNotFoundError:
         logging.error(f"Template file not found: {template_path}")

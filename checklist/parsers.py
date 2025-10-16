@@ -169,6 +169,6 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         logging.error(f"Invalid parser name: {parser_name}")
         raise ValueError(f"Invalid parser name: {parser_name}")
 
-    logging.info(f"Retrieving parser for: {parser_name}")
+    logging.debug(f"Retrieving parser for: {parser_name}")
     parser = parser_configs[parser_name]() if callable(parser_configs[parser_name]) else parser_configs[parser_name]
     return parser

@@ -192,7 +192,7 @@ class OracleResultTestClass(TestClass):
                 try:
                     self._validate_pruned_schema(response)
                     self.schema = response
-                    logging.info(f"Pruned schema: {response}")
+                    logging.info(f"Pruned schema: {json.dumps(response, indent=4)}")
                     self.schema_pruned = True
                     break
                 except ValidationError as e:
@@ -212,29 +212,43 @@ class OracleResultTestClass(TestClass):
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
-        # normalized = {
-        #     key: value if isinstance(value, list) else [value] 
-        #     for key, value in oracles.items()
-        # }
-        # golds = list(zip(*normalized.values()))
-        def freeze(obj):
+        def __freeze(obj):
             """Recursively convert unhashable objects into hashable equivalents."""
             if isinstance(obj, dict):
-                # sort keys to make it deterministic
-                return tuple(sorted((k, freeze(v)) for k, v in obj.items()))
+                return tuple(sorted((k, __freeze(v)) for k, v in obj.items()))
             elif isinstance(obj, (list, tuple, set)):
-                return tuple(freeze(x) for x in obj)
+                return tuple(__freeze(x) for x in obj)
             elif isinstance(obj, np.ndarray):
-                return tuple(obj.tolist())  # turn ndarray into tuple of values
+                return tuple(obj.tolist())
             else:
                 return obj
-        return bool(preds) and set(preds) == set(freeze(o) for o in oracles)
+        def __is_subset(pred, oracle_row):
+            """Check if pred tuple is a subsequence of oracle_row tuple."""
+            n, m = len(pred), len(oracle_row)
+            if n > m:
+                return False
+            # 尝试匹配 pred 在 oracle_row 中的某个连续子序列
+            for i in range(m - n + 1):
+                if oracle_row[i:i+n] == pred:
+                    return True
+            return False
+
+        if not preds or not oracles: return False
+
+        preds_frozen = [__freeze(p) for p in preds]
+        oracle_frozen = [__freeze(o) for o in oracles]
+
+        # relax the comparision if one column matches, cuz `oracles` may include redunctant columns
+        for p in preds_frozen:
+            if not any(__is_subset(p, o) for o in oracle_frozen): return False
+        return True
+
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         # Test the original SQL over a faked database with expected execution results
         res = validate_sql_query(ret.test_fixtures.db, self.sql)
-        logging.info(f"Validating SQL: {self.sql}\nResult: {res['RESULT']}")
+        logging.info(f"Validating SQL: {self.sql}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
         ret.results.target = ret.test_fixtures.label_result["rows"] if "rows" in ret.test_fixtures.label_result.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}\nTarget Result: {ret.results.target}")
@@ -539,7 +553,6 @@ class OracleResultTestClass(TestClass):
                     continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
-                logging.info(f"database instances: {response['database_instances']}\nexplanation: {response2['explanation']}\nresulting_data:{response2['resulting_data']}")
                 logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
