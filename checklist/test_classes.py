@@ -242,7 +242,6 @@ class OracleResultTestClass(TestClass):
         for p in preds_frozen:
             if not any(__is_subset(p, o) for o in oracle_frozen): return False
         return True
-
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
@@ -251,7 +250,7 @@ class OracleResultTestClass(TestClass):
         logging.info(f"Validating SQL: {self.sql}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
         ret.results.target = ret.test_fixtures.label_result["rows"] if "rows" in ret.test_fixtures.label_result.keys() else []
-        logging.info(f"Predicted Result: {ret.results.pred}\nTarget Result: {ret.results.target}")
+        logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results
@@ -566,15 +565,16 @@ class NLRelaxTestClass(TestClass):
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
-        if not orgin or not mutant: return False
-        # print(len(mutant))
+        if orgin is None or mutant is None: return False
         return len(orgin) <= len(mutant)
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         # ret.description = "Test the original SQL over a faked database with expected execution results"
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" else execute_sql(self.db_path, self.sql)
+        res = validate_sql_query(self.db_path, self.sql)
+        ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
+        logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) >= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
@@ -692,7 +692,7 @@ class NLRelaxTestClass(TestClass):
                 ret.test_fixtures.sql_mutant = response["sql_mutant"] 
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-                # print(f"nl:{self.nl}\nsql:{self.sql}\nresponse:{response}")
+                logging.info(f"Generated test fixtures:\n{json.dumps(response, indent=4)}")
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
@@ -702,13 +702,15 @@ class NLStrengthenTestClass(TestClass):
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
-        if not orgin or not mutant: return False
+        if orgin is None or mutant is None: return False
         return len(orgin) >= len(mutant)
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" else execute_sql(self.db_path, self.sql)
+        res = validate_sql_query(self.db_path, self.sql)
+        ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
+        logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) <= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
@@ -812,7 +814,8 @@ class NLStrengthenTestClass(TestClass):
                 ret.type = response["type"]
                 ret.desc = response["description"]
                 ret.test_fixtures.nl_mutant = response["nl_mutant"]
-                ret.test_fixtures.sql_mutant = response["sql_mutant"] 
+                ret.test_fixtures.sql_mutant = response["sql_mutant"]
+                logging.info(f"Generated test fixtures:\n{json.dumps(response, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
