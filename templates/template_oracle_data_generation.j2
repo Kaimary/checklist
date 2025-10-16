@@ -1,9 +1,14 @@
-You are a data science expert.
-Below, you are presented with a database schema and a question.
+You are a data science expert. 
+Below, you are presented with a database schema and a natural language (NL) question (with a hint).
+
 Your task is to:
-- Read and understand the schema and the natural language (NL) question.
+- Read and understand the schema and the NL question.
 - Simulate a minimum database (with data instances) that derives from the schema. If any table does not use in the query, skip it.
-- Provide the resulting data that would be returned when the NL query is executed on that database.
+- Ensure the types of the simulated data instances align with the ones defined in the given schema.
+{% if VALUES %}
+- We found some data instances may be relavant with the question, put them into your simulation if possible:
+{{VALUES}}
+{% endif %}
 
 Database Schema
 ###
@@ -20,27 +25,14 @@ Output requirement (must be **exact JSON**, nothing else):
 Return a single JSON object with this exact structure (keys and string values **must** use double quotes `"` — never single quotes `'`):
 {% raw %}
 {
-    "chain_of_thought_reasoning": "Your thought process on how you think. Explain how to get the resulting data step by step based on the instances. This is very important!",
     "database_instances": {
         "table1": [["col1_value", "col2_value", ...], ...]
         "table2": [...]
         ...
     }
-    "resulting_data": {
-        "columns": ["table.column1", "table.column2", ...],
-        "rows": [
-            ["value1", "value2", ...],
-            ...
-        ]
-        ....
-        // If no data, return: "unknown": ""
     }
 }
 {% endraw %}
-
-Guidance for the output:
-- Ensure the database_instances are internally consistent
-- Make sure the columns in the resulting_data must be derived from the schema.
 
 {% if HISTORY %}
 Below are previously simulated database instances:

@@ -157,7 +157,7 @@ class SemanticCheckTestClass(TestClass):
         return outputs
 
 class OracleResultTestClass(TestClass):
-    def __init__(self, prunned_threshold=20, **kwargs):
+    def __init__(self, schema_file_path, prunned_threshold=20, **kwargs):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl", **kwargs)
 
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
@@ -179,7 +179,7 @@ class OracleResultTestClass(TestClass):
                 try:
                     self._validate_pruned_schema(response)
                     self.schema = response
-                    # print(response)
+                    # print(f"Pruned schema: {response}")
                     self.schema_pruned = True
                     break
                 except ValidationError as e:
@@ -196,6 +196,7 @@ class OracleResultTestClass(TestClass):
             include_value_description=True
         )
         self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
+        self.red_schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
@@ -279,21 +280,23 @@ class OracleResultTestClass(TestClass):
                         response[table_name].insert(0, pk_column_name)
             return True                 
 
-    def _validate_test_fixture(self, response, history):
-        def __output_format_check(response):
+    def _validate_test_fixture(self, response, history, key="database_instances"):
+        def __output_format_check(response, key):
             if not isinstance(response, dict):
                 raise ValidationError(
                     f"Output format(type) check failed. "
                     f"response type: {type(response)}, "
                     f"Expected type: dict"
                 )
-            if "database_instances" not in response.keys() or "resulting_data" not in response.keys(): 
+            # quick fix (hard-code) before checking
+            if "columns" in response.keys() and "rows" in response.keys(): response = {"resulting_data": response}
+            if key not in response.keys():
                 raise ValidationError(
                     f"Output format(key) check failed. "
                     f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `database_instances`, `resulting_data`"
+                    f"Expected keys: `{key}`"
                 )
-            if "unknown" not in response["resulting_data"].keys() and (any(k not in response["resulting_data"].keys() for k in ["columns", "rows"])): 
+            if key == "resulting_data" and ("unknown" not in response["resulting_data"].keys() and (any(k not in response["resulting_data"].keys() for k in ["columns", "rows"]))): 
                 raise ValidationError(
                     f"Output format(key in key) check failed. "
                     f"Keys found in `resulting_data`: {','.join(response['resulting_data'].keys())}, "
@@ -319,7 +322,7 @@ class OracleResultTestClass(TestClass):
                         types.append(match.group(1).upper())
                 res[table_name] = types
             return res
-        def __resulting_schema_check(response, schema_dict):
+        def __resulting_schema_check(response, schema_dict): # deprecated
             all_columns = []
             for columns in schema_dict.values():
                 all_columns.extend(columns)
@@ -382,7 +385,7 @@ class OracleResultTestClass(TestClass):
                             f"Expected column count of Table {t}: {len(column_types[t])}"
                         )
             return True
-        def __response_history_compatible_check(response, history, max_retry):
+        def __response_history_compatible_check(response, history):
             def __dicts_equal___(d1, d2):
                 if d1.keys() != d2.keys():
                     return False
@@ -410,7 +413,7 @@ class OracleResultTestClass(TestClass):
                 retry = 0
                 prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
                 parser = get_parser(parser_name="oracle_result_checking")
-                while True and retry < max_retry:
+                while True and retry < self.max_retry:
                     response2 = self.backbone(prompt, parser, request_kwargs={
                         "HINT": self.hint,
                         "QUESTION": self.nl,
@@ -428,15 +431,16 @@ class OracleResultTestClass(TestClass):
             return True
         
         # output format check
-        __output_format_check(response)
-        __resulting_schema_check(response, self.schema if self.schema_pruned else DatabaseManager().get_db_schema())
+        __output_format_check(response, key)
+        # __resulting_schema_check(response, self.schema if self.schema_pruned else DatabaseManager().get_db_schema())
         # schema-data alignment check
-        table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
-        column_types= DatabaseManager().get_all_column_types() \
-            if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
-        __schema_data_alignment_check(response, table_names, column_types, self.schema)
+        if key == "database_instances":
+            table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
+            column_types= DatabaseManager().get_all_column_types() \
+                if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
+            __schema_data_alignment_check(response, table_names, column_types, self.schema)
         # response duplication check
-        __response_history_compatible_check(response, history, self.max_retry)
+        __response_history_compatible_check(response, history)
        
     def _form_instance(self, idx, ret):
         """
@@ -473,9 +477,21 @@ class OracleResultTestClass(TestClass):
                 # f"resulting_data: {json.dumps(h['label_result'], indent=4)}"
                 for i, h in enumerate(history)
             )
-
+        def __values_to_string(col2vals):
+            return "\n".join(
+                f"Column `{col}`: {', '.join(vals)};"
+                for col, vals in col2vals.items()
+            )
         if self.use_cache: return self._load_cached_test_cases()
-
+        # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
+        # If exists, prompt LLM to put these values into the simulated database to make sure exact match
+        matched_values = []
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
+            matched_values = parsed_query.check_conditions()
+        except Exception as e:
+            print(e)
+        
         parser = get_parser(parser_name="oracle_data_generation")
         parser2 = get_parser(parser_name="oracle_data_verification")
         history, outputs = [], []
@@ -488,13 +504,10 @@ class OracleResultTestClass(TestClass):
                 prompt = get_prompt(
                     template_name="oracle_data_generation", 
                     schema_string=self.schema_string,
+                    matched_values=__values_to_string(matched_values) if matched_values else None,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.backbone(prompt, parser, request_kwargs={
-                    "HINT": self.hint,
-                    "QUESTION": self.nl
-                    }
-                )
+                response = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
                 try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e: 
@@ -507,26 +520,22 @@ class OracleResultTestClass(TestClass):
                     schema_string=self.schema_string
                 )
                 response2 = self.backbone(prompt2, parser2, request_kwargs={
-                    "HINT": self.hint,
                     "QUESTION": self.nl,
-                    "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4),
-                    "EXECUTED_RESULT": json.dumps(response["resulting_data"], indent=4)
+                    "HINT": self.hint,
+                    "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4)
                     }
                 )
-                if not isinstance(response2, dict):
-                    retry += 1
-                    continue
-                if "columns" in response2.keys() and "rows" in response2.keys(): response2 = {"resulting_data": response2}
-                response["resulting_data"] = response2["resulting_data"]
                 try:
-                    self._validate_test_fixture(response, history)
+                    response2["database_instances"] = response["database_instances"]
+                    self._validate_test_fixture(response2, history, key="resulting_data")
                 except ValidationError as e:
                     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
                     continue
                 ret.test_fixtures.data = response["database_instances"]
-                ret.test_fixtures.label_result = response["resulting_data"]
+                ret.test_fixtures.label_result = response2["resulting_data"]
+                # print(f"database instances: {response['database_instances']}\nchain-of-the-thought: {response2['explanation']}\nresulting_data:{response2['resulting_data']}")
                 logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
