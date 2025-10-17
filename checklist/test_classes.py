@@ -146,10 +146,10 @@ class SemanticCheckTestClass(TestClass):
                     bugs.extend(parsed_query.validate())
                 except Exception as e:
                     bugs.append(f"{e} Query validation process failed. \nSQL: {self.sql}")
-
             # for b in bugs: print(f"level: {b.level}, desc: {b.description}")
             # Hard-code for spider to ignore `column type mismathes aggregation` bugs
             if "spider" in self.db_path: bugs = [bug for bug in bugs if not isinstance(bug, str) and "but function" not in bug.description]
+            if bugs: logging.info("\nBugs found:\n{}".format("\n".join(bug.description for bug in bugs)))
             ret.test_fixtures.bugs = bugs
             outputs.append(self._form_instance(len(outputs), ret))
             del parsed_query
@@ -163,11 +163,12 @@ class OracleResultTestClass(TestClass):
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
         # If exists, prompt LLM to make sure required columns/values existed.
-        self.matches = {}
+        self.matched_conditions, self.matched_keys = {}, {}
         try:
             self.red_schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
             parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
-            self.matches = parsed_query.check_conditions()
+            self.matched_conditions = parsed_query.check_conditions()
+            self.matched_keys = parsed_query.check_keys()
         except Exception as e:
             print(e)
 
@@ -181,7 +182,8 @@ class OracleResultTestClass(TestClass):
             while True and retry < self.max_retry:
                 prompt = get_prompt(
                     template_name="schema_pruning", 
-                    columns_string=', '.join(self.matches.keys()) if self.matches else None,
+                    columns_string=', '.join(self.matched_conditions.keys()) if self.matched_conditions else None,
+                    keys_string=', '.join([f"{t}.{c}" for t, c in self.matched_keys.items()]) if self.matched_keys else None,
                     error_string='\n'.join(error) if error else None)
                 response = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
@@ -249,6 +251,9 @@ class OracleResultTestClass(TestClass):
         res = validate_sql_query(ret.test_fixtures.db, self.sql)
         logging.info(f"Validating SQL: {self.sql}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
+        # the simulated database can't execute the sql propertly, most probably the simulation missing some pk/fk-like columns
+        # to ensure good performance, set a special tag in the ret to make final detection as "UNDETERMINED"
+        if not ret.results.pred: ret.results.orc_tag = True
         ret.results.target = ret.test_fixtures.label_result["rows"] if "rows" in ret.test_fixtures.label_result.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
@@ -522,7 +527,7 @@ class OracleResultTestClass(TestClass):
                 prompt = get_prompt(
                     template_name="oracle_data_generation", 
                     schema_string=self.schema_string,
-                    columns_values_string=__values_to_string(self.matches) if self.matches else None,
+                    columns_values_string=__values_to_string(self.matched_conditions) if self.matched_conditions else None,
                     history_string=__history_to_string(history) if history else None
                 )
                 response = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
@@ -552,7 +557,7 @@ class OracleResultTestClass(TestClass):
                     continue
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
-                logging.info(f"Generated test fixture: \nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
+                logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")

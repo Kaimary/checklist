@@ -10,7 +10,11 @@ Your task is to:
     - We found some columns may be relavant with the question, put them into your simulation if possible:
     {{COLUMNS}}
     {% endif %}
-    - Important: If a table has a primary/foreign key (or any declared unique identifier), that column must be kept in the pruned schema.
+    - Important: If a table has a primary/foreign key (or any declared unique identifier), that column must be kept in the pruned schema. 
+    {% if KEYS %}
+    We found some keys may be relavant:
+    {{KEYS}}
+    {% endif %}
 
 Database Schema
 ###

@@ -1332,6 +1332,18 @@ class FromClause(Clause):
         self.ops = self.join_conds + self.sub_queries + self.db_schema.query_tabs
         return
 
+    def check(self):
+        res = defaultdict(list)
+        for cond in self.join_conds:
+            for predicate in cond.ops:
+                if isinstance(predicate, str): continue
+                if predicate._cmp == "=":
+                    op1 = predicate.ops[0]
+                    op2 = predicate.ops[1]
+                    if isinstance(op1, Column): res[op1.tab.tab_name].append(op1.col_name)
+                    if isinstance(op2, Column): res[op2.tab.tab_name].append(op2.col_name)
+        return res
+    
     def validate(self):
         res = []
         # Sub queries validation
@@ -1922,6 +1934,9 @@ class Query:
     def check_conditions(self, clause="WHERE"):
         return self.clauses[clause].check() if clause in self.clauses else {}
 
+    def check_keys(self, clause="FROM"):
+        return self.clauses[clause].check() if clause in self.clauses else {}
+    
     def get_used_schema(self):
         tables = set()
         columns = set()
