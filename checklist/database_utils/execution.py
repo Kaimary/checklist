@@ -102,7 +102,7 @@ def compare_sqls(db_path: str, predicted_sql: str, ground_truth_sql: str, meta_t
         res = 0
     return {'exec_res': res, 'exec_err': error}
 
-def validate_sql_query(db_path: str, sql: str, max_returned_rows: int = 30) -> Dict[str, Union[str, Any]]:
+def validate_sql_query(db_path: str, sql: str, max_returned_rows: Union[str, int] = 30) -> Dict[str, Union[str, Any]]:
     """
     Validates an SQL query by executing it and returning the result.
     

@@ -248,7 +248,7 @@ class OracleResultTestClass(TestClass):
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         # Test the original SQL over a faked database with expected execution results
-        res = validate_sql_query(ret.test_fixtures.db, self.sql)
+        res = validate_sql_query(ret.test_fixtures.db, self.sql, max_returned_rows="all")
         logging.info(f"Validating SQL: {self.sql}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
         # the simulated database can't execute the sql propertly, most probably the simulation missing some pk/fk-like columns
@@ -577,7 +577,7 @@ class NLRelaxTestClass(TestClass):
         ret.results = Munch()
         # ret.description = "Test the original SQL over a faked database with expected execution results"
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        res = validate_sql_query(self.db_path, self.sql)
+        res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
         ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) >= len(target)"
@@ -713,9 +713,9 @@ class NLStrengthenTestClass(TestClass):
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        res = validate_sql_query(self.db_path, self.sql)
+        res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
         ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
-        logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
+        logging.info(f"Len of predicted results: {len(ret.results.pred)}, target results: {len(ret.results.target)}")
         ret.results.standard = "len(pred) <= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
         return passed, ret.test_fixtures, ret.results
