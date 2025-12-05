@@ -1,4 +1,4 @@
-import os, re, json, random, copy, logging
+import os, re, json, random, logging
 import time
 import numpy as np
 from munch import Munch
@@ -13,7 +13,6 @@ from checklist.spinner import Spinner
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.red.parser.report import BugLevel
-from checklist.red.parser.schema import Schema
 from checklist.red.parser.red_parser import Query
 from checklist.database_manager import DatabaseManager
 from checklist.base_test_class import TestClass, ValidationError
@@ -79,10 +78,10 @@ class MinimumSyntaxTestClass(TestClass):
         return outputs
 
 class SemanticCheckTestClass(TestClass):
-    def __init__(self, schema_file_path, **kwargs):
+    def __init__(self, red_schema, **kwargs):
         super().__init__("Semantic Check Test Class", "semantic_check", "semantic", key="sql", **kwargs)
 
-        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
+        self.schema = red_schema
         self.test_cases = self._generator()
 
     def _compare_query_results(self, pred):
@@ -138,7 +137,7 @@ class SemanticCheckTestClass(TestClass):
             ret.test_fixtures = Munch()
             parsed_query = None
             try:
-                parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+                parsed_query = Query(self.sql, self.schema)
             except Exception as e:
                 print(e)
                 bugs.append(f"{e} SQL parse failed! \nSQL: {self.sql}")
@@ -158,21 +157,21 @@ class SemanticCheckTestClass(TestClass):
         return outputs
 
 class OracleResultTestClass(TestClass):
-    def __init__(self, schema_file_path, pruning_threshold=20, **kwargs):
+    def __init__(self, red_schema, pruning_threshold=20, **kwargs):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl", **kwargs)
 
+        self.red_schema = red_schema
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
         # If exists, prompt LLM to make sure required columns/values existed.
         self.matched_conditions, self.matched_keys = {}, {}
         try:
-            start = time.time()
-            self.red_schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
-            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
+            start=time.time()
+            parsed_query = Query(self.sql, self.red_schema)
             self.matched_conditions = parsed_query.check_conditions()
             self.matched_keys = parsed_query.check_keys()
             end = time.time()
-            logging.info(f"RED took {end - start:.2f} seconds.")
+            print(f"RED took {end - start:.2f} seconds.")
         except Exception as e:
             print(e)
 
@@ -542,7 +541,6 @@ class OracleResultTestClass(TestClass):
                 response = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
                 end=time.time()
                 logging.info(f"oracle_data_generation took {end - start:.2f} seconds.")
-                start=time.time()
                 try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e: 
@@ -550,8 +548,6 @@ class OracleResultTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
                     continue
-                end=time.time()
-                logging.info(f"_validate_test_fixture took {end - start:.2f} seconds.")
                 prompt2 = get_prompt(
                     template_name="oracle_data_verification", 
                     schema_string=self.schema_string
@@ -565,7 +561,6 @@ class OracleResultTestClass(TestClass):
                 )
                 end=time.time()
                 logging.info(f"oracle_data_verification took {end - start:.2f} seconds.")
-                start=time.time()
                 try:
                     self._validate_test_fixture(response2, history, key="resulting_data", instances=response["database_instances"])
                 except ValidationError as e:
@@ -573,8 +568,6 @@ class OracleResultTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
                     continue
-                end=time.time()
-                logging.info(f"_validate_test_fixture took {end - start:.2f} seconds.")
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
                 # logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
@@ -584,9 +577,9 @@ class OracleResultTestClass(TestClass):
         return outputs
 
 class NLRelaxTestClass(TestClass):
-    def __init__(self, schema_file_path, **kwargs):
+    def __init__(self, red_schema, **kwargs):
         super().__init__("Natural Language Relaxing Test Class", "nl_relax", "metamorphic", **kwargs)
-        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
+        self.schema = red_schema
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
@@ -673,7 +666,7 @@ class NLRelaxTestClass(TestClass):
         # check query clauses and skip the test if constraint-relatd clauses (WHERE/ORDER/GROUP/IUE) are missing
         clauses = []
         try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            parsed_query = Query(self.sql, self.schema)
             clauses = list(parsed_query.clauses.keys())
         except Exception as e:
             print(e)
@@ -1143,12 +1136,12 @@ class SelfConsistencyTestClass(TestClass):
         return outputs
 
 class QueryReviewTestClass(TestClass):
-    def __init__(self, schema_file_path, **kwargs):
+    def __init__(self, red_schema, **kwargs):
         super().__init__("Step-through Query Review Test Class", "query_review", "explore", **kwargs)
-        self.schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
+        self.schema = red_schema
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
-            model_type=ModelType.GPT_4O_MINI,
+            model_type=ModelType.DEFAULT,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )        
         self.test_cases = self._generator()
@@ -1189,7 +1182,7 @@ class QueryReviewTestClass(TestClass):
         # Obtain query clauses for next debugging purpose
         clauses = []
         try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            parsed_query = Query(self.sql, self.schema)
             clauses = list(parsed_query.clauses.keys())
         except Exception as e:
             print(e)
@@ -1342,7 +1335,9 @@ class NLReviewTestClass(TestClass):
                     if user_response.terminated:
                         print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
                         break
-
+                    
+                    print(f"\033[94mAI User:\n\n{user_response.msg.content}\033[0m", flush=True)
+                    print(f"\033[92mAI Assistant:\n\n{assistant_response.msg.content}\033[0m", flush=True)
                     # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
                     # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
                     

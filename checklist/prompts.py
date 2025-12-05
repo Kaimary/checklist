@@ -69,6 +69,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         "query_rubber_duck_debugging": {"input_variables": ["HINT", "QUESTION", "SQL", "CLAUSES", "RANDOMNESS1", "RANDOMNESS2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "nl_rubber_duck_debugging": {"input_variables": ["QUESTION", "SQL", "HINT", "RANDOMNESS1", "RANDOMNESS2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "llm_nl2sql_judgment": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "EXAMPLES": kwargs.get("examples_string", "")}},
+        "llm_cot_nl2sql_judgment": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "EXAMPLES": kwargs.get("examples_string", "")}},
         "schema_pruning": {"input_variables": ["HINT", "QUESTION", "DATABASE_SCHEMA"], "partial_variables": {"KEYS": kwargs.get("keys_string", ""), "COLUMNS": kwargs.get("columns_string", ""), "ERROR": kwargs.get("error_string", "")}}
     }
 

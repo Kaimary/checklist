@@ -128,9 +128,13 @@ class SchemaPruningParser(BaseModel):
     """Model for schema pruning output."""
     pruned_schema: str = Field(description="The pruned database schema with only the necessary tables and columns.")
 
-class LLMJudgmentOutput(BaseModel):
+class LLMCoTJudgmentOutput(BaseModel):
     """Model for LLM judgment output."""
     chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
+    judgment: str = Field(description="Yes or No")
+
+class LLMJudgmentOutput(BaseModel):
+    """Model for LLM judgment output."""
     judgment: str = Field(description="Yes or No")
 
 def get_parser(parser_name: str) -> BaseOutputParser:
@@ -162,6 +166,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_mutation_generation": MarkDownOutputParser,
         "llm_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMJudgmentOutput),
+        "llm_cot_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "schema_pruning": lambda: JsonOutputParser(pydantic_object=SchemaPruningParser),
     }
 

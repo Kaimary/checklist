@@ -11,11 +11,12 @@ class AbstractJudge:
         pass
 
 class LLMJudge(AbstractJudge):
-    def __init__(self, model_name: str, enable_few_shot):
+    def __init__(self, model_name: str, enable_few_shot, enable_cot):
         super().__init__()
         self.model_name = model_name
         self.model = LLM(model_name=model_name)
         self.enable_few_shot = enable_few_shot
+        self.enable_cot = enable_cot
 
     def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
         self.nl = nl
@@ -38,12 +39,20 @@ class LLMJudge(AbstractJudge):
         )
 
     def run(self):
-        parser = get_parser(parser_name="llm_nl2sql_judgment")
-        prompt = get_prompt(
-            template_name="llm_nl2sql_judgment", 
-            schema_string=self.schema_string,
-            examples_string="placeholder" if self.enable_few_shot else None
-        )
+        if self.enable_cot:
+            parser = get_parser(parser_name="llm_cot_nl2sql_judgment")
+            prompt = get_prompt(
+                template_name="llm_cot_nl2sql_judgment", 
+                schema_string=self.schema_string,
+                examples_string="placeholder" if self.enable_few_shot else None
+            )
+        else:
+            parser = get_parser(parser_name="llm_nl2sql_judgment")
+            prompt = get_prompt(
+                template_name="llm_nl2sql_judgment", 
+                schema_string=self.schema_string,
+                examples_string="placeholder" if self.enable_few_shot else None
+            )
         response = self.model(prompt, parser, request_kwargs={
             "HINT": self.hint, 
             "QUESTION": self.nl,
@@ -61,7 +70,7 @@ class GuardianJudge(AbstractJudge):
             test_instance = test()  # Create an instance of the test class
             self.suite.add(test_instance, name=f"{test.__name__} Test", capability=f"{test.__name__.lower()}", description=f"{test.__name__} test for SQL correctness")
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema, pred_match_gold=None):
         self.suite.set(
             nl=nl,
             hint=hint,
@@ -69,6 +78,7 @@ class GuardianJudge(AbstractJudge):
             db_id=db_id,
             db_root_path=db_root_path,
             schema_file_path=schema_file_path,
+            red_schema=red_schema,
             pred_match_gold=pred_match_gold
         )
 
