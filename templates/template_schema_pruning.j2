@@ -6,6 +6,7 @@ Your task is to:
 - Prune the schema to retain relevant tables and columns. 
 - The pruning should be MINIMAL 
     — Rremove only columns/tables that are clearly unnecessary. When in doubt, keep them.
+    - For each kept table, keep 10 columns, if possible.
     {% if COLUMNS %}
     - We found some columns may be relavant with the question, put them into your simulation if possible:
     {{COLUMNS}}

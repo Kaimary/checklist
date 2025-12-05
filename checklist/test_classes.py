@@ -1,4 +1,5 @@
 import os, re, json, random, copy, logging
+import time
 import numpy as np
 from munch import Munch
 from colorama import Fore, Style
@@ -157,7 +158,7 @@ class SemanticCheckTestClass(TestClass):
         return outputs
 
 class OracleResultTestClass(TestClass):
-    def __init__(self, schema_file_path, prunned_threshold=20, **kwargs):
+    def __init__(self, schema_file_path, pruning_threshold=20, **kwargs):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl", **kwargs)
 
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
@@ -165,23 +166,26 @@ class OracleResultTestClass(TestClass):
         # If exists, prompt LLM to make sure required columns/values existed.
         self.matched_conditions, self.matched_keys = {}, {}
         try:
+            start = time.time()
             self.red_schema = Schema(get_db_schema_from_json(self.db_id, schema_file_path), self.db_path)
             parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
             self.matched_conditions = parsed_query.check_conditions()
             self.matched_keys = parsed_query.check_keys()
+            end = time.time()
+            logging.info(f"RED took {end - start:.2f} seconds.")
         except Exception as e:
             print(e)
 
         self.schema_pruned = False
         # Prune the `lenthy` schema first, to ensure the quality of generated data 
-        if any(len(cols) > prunned_threshold for cols in self.schema.values()):
-            logging.warning(f"Database {self.db_id} has tables with more than {prunned_threshold} columns. Truncating the schema before generation ...")
+        if any(len(cols) > pruning_threshold for cols in self.schema.values()):
+            logging.warning(f"Database {self.db_id} has tables with more than {pruning_threshold} columns. Truncating the schema before generation ...")
             retry = 0
             error = set() # Append the error messages to avoid endless llm loop
             parser = get_parser(parser_name="schema_pruning")
             while True and retry < self.max_retry:
                 prompt = get_prompt(
-                    template_name="schema_pruning", 
+                    template_name="schema_pruning",
                     columns_string=', '.join(self.matched_conditions.keys()) if self.matched_conditions else None,
                     keys_string=', '.join([f"{t}.{c}" for t, c in self.matched_keys.items()]) if self.matched_keys else None,
                     error_string='\n'.join(error) if error else None)
@@ -201,7 +205,7 @@ class OracleResultTestClass(TestClass):
                     error.add(str(e).split('.')[-1])
                     retry += 1
                     logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
-
+            
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
         self.schema_string = DatabaseManager().get_database_schema_string(
@@ -211,8 +215,11 @@ class OracleResultTestClass(TestClass):
             include_value_description=True
         )
         self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
+        start = time.time()
         self.test_cases = self._generator()
-
+        end = time.time()
+        logging.info(f"Generate tests took {end - start:.2f} seconds.")
+        
     def _compare_query_results(self, preds, oracles):
         def __freeze(obj):
             """Recursively convert unhashable objects into hashable equivalents."""
@@ -408,12 +415,13 @@ class OracleResultTestClass(TestClass):
                     normalized = __normalize_sqlite_type(tp)
                     expected_type = sqlite_type_map.get(normalized, str)
                     try:
-                        expected_type(v)
+                        if v is not None:
+                            expected_type(v)
                     except (ValueError, TypeError):
                         raise ValidationError(
                             f"Schema-data column type mismatch. "
-                            f"Column type Data : {len(rows[0])} "
-                            f"Expected column count of Table {t}: {len(column_types[t])}"
+                            f"Column type Data: {v} "
+                            f"Expected column type: {expected_type}"
                         )
             return True
         def __response_history_compatible_check(response, history):
@@ -524,6 +532,7 @@ class OracleResultTestClass(TestClass):
             while(len(outputs) < self.num) and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
+                start=time.time()
                 prompt = get_prompt(
                     template_name="oracle_data_generation", 
                     schema_string=self.schema_string,
@@ -531,6 +540,9 @@ class OracleResultTestClass(TestClass):
                     history_string=__history_to_string(history) if history else None
                 )
                 response = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
+                end=time.time()
+                logging.info(f"oracle_data_generation took {end - start:.2f} seconds.")
+                start=time.time()
                 try:
                     self._validate_test_fixture(response, history)
                 except ValidationError as e: 
@@ -538,16 +550,22 @@ class OracleResultTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
                     continue
+                end=time.time()
+                logging.info(f"_validate_test_fixture took {end - start:.2f} seconds.")
                 prompt2 = get_prompt(
                     template_name="oracle_data_verification", 
                     schema_string=self.schema_string
                 )
+                start=time.time()
                 response2 = self.backbone(prompt2, parser2, request_kwargs={
                     "QUESTION": self.nl,
                     "HINT": self.hint,
                     "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4)
                     }
                 )
+                end=time.time()
+                logging.info(f"oracle_data_verification took {end - start:.2f} seconds.")
+                start=time.time()
                 try:
                     self._validate_test_fixture(response2, history, key="resulting_data", instances=response["database_instances"])
                 except ValidationError as e:
@@ -555,9 +573,11 @@ class OracleResultTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
                     continue
+                end=time.time()
+                logging.info(f"_validate_test_fixture took {end - start:.2f} seconds.")
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
-                logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
+                # logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
                 history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
