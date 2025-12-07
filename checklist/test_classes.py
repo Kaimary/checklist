@@ -1,4 +1,4 @@
-import os, re, json, random, logging
+import os, re, json, random, copy, logging
 import time
 import numpy as np
 from munch import Munch
@@ -137,7 +137,7 @@ class SemanticCheckTestClass(TestClass):
             ret.test_fixtures = Munch()
             parsed_query = None
             try:
-                parsed_query = Query(self.sql, self.schema)
+                parsed_query = Query(self.sql, copy.deepcopy(self.schema))
             except Exception as e:
                 print(e)
                 bugs.append(f"{e} SQL parse failed! \nSQL: {self.sql}")
@@ -168,7 +168,7 @@ class OracleResultTestClass(TestClass):
         self.matched_conditions, self.matched_keys = {}, {}
         try:
             # start=time.time()
-            parsed_query = Query(self.sql, self.red_schema)
+            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
             self.matched_conditions = parsed_query.check_conditions()
             self.matched_keys = parsed_query.check_keys()
             # end = time.time()
@@ -667,7 +667,7 @@ class NLRelaxTestClass(TestClass):
         # check query clauses and skip the test if constraint-relatd clauses (WHERE/ORDER/GROUP/IUE) are missing
         clauses = []
         try:
-            parsed_query = Query(self.sql, self.schema)
+            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
             clauses = list(parsed_query.clauses.keys())
         except Exception as e:
             print(e)
@@ -1183,7 +1183,7 @@ class QueryReviewTestClass(TestClass):
         # Obtain query clauses for next debugging purpose
         clauses = []
         try:
-            parsed_query = Query(self.sql, self.schema)
+            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
             clauses = list(parsed_query.clauses.keys())
         except Exception as e:
             print(e)
