@@ -1475,13 +1475,10 @@ class GroupbyClause(Clause):
 
     def parse(self):
         # Parse group by cols
-        start=time.time()
         sql_token_seg = self._parse_seg()
         for seg in sql_token_seg:
             self.group_cols.append(parse_as_unit(seg, self.db_schema))
         self.ops = self.group_cols
-        end=time.time()
-        print(f"GROUP clause parse {end - start:.2f} seconds.")
         return
 
     def validate(self):

@@ -1,22 +1,15 @@
-You are a data science expert.
-Given a natural language (NL) question and its corresponding SQL query, your task is to find a metamorphic relation that relaxes both the NL question and the SQL query.
+You are an expert in metamorphic testing for NL2SQL evaluation.
 
-By relax, we mean:
-- Removing or loosening exactly one existing constraint that appears in both the NL question and the SQL query;
-- The output of the relaxed query is expected to be a superset (i.e., not smaller) than the output of the original query;
-- If no shared constraint exists between the NL and SQL query, return "unknown".
+Your Task:
+Given a natural language (NL) question and an SQL query,  find a metamorphic relation (MR) by relaxing EXACTLY ONE constraint that appears in BOTH the NL and the SQL.
 
-###
-NL Question:
-{{QUESTION}}
+Definition of "relax":
+- Either remove the constraint entirely, OR broaden it (e.g., widen a range, lower a threshold).
+- The relaxed SQL result MUST be a superset of the original result.
+- If no constraint is shared between NL and SQL → output "unknown".
 
-Hint:
-{{HINT}}
+You MUST output JSON in one of the two formats.
 
-SQL:
-{{QUERY}}
-
-Please respond with a JSON object strictly following one of the two formats below:
 Case 1 - No shared constraint:
 {% raw %}
 {
@@ -35,10 +28,20 @@ Case 2 - A shared constraint is found:
 }
 {% endraw %}
 
-Guidelines
-- Only modify one constraint.
-- Keep reasoning concise and technical (no storytelling).
-- If unsure whether a constraint is shared, choose "unknown".
+Rules:
+- Only modify ONE shared constraint.
+- If unsure whether a constraint is shared → choose "unknown".
+- Keep reasoning concise (no storytelling).
+
+###
+NL Question:
+{{QUESTION}}
+
+Hint:
+{{HINT}}
+
+SQL:
+{{QUERY}}
 
 {% if HISTORY %}
 Below are previously generated metamorphic relations:

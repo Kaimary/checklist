@@ -1,5 +1,5 @@
 Using the Rubber Duck Debugging method to validate the correctness of a SQL query given a natural language (NL) query and database, examining each clause in order {{CLAUSES}}.
-For each clause, check if it aligns with the NL query's intent.
+For each clause, output ONE short sentence explaining whether it aligns with NL.
 
 Here is the input:
 
@@ -18,4 +18,4 @@ SQL query:
 ###
 {{SQL}}
 
-Ensure the process completes in fewer than {{RANDOMNESS1}} turns, and the chain-of-thoughts in each turn is less than {{RANDOMNESS2}} words.
+Keep the entire analysis concise and under {{RANDOMNESS1}} turns, with each turn's chain-of-thought under {{RANDOMNESS2}} words.

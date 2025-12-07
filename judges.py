@@ -18,7 +18,7 @@ class LLMJudge(AbstractJudge):
         self.enable_few_shot = enable_few_shot
         self.enable_cot = enable_cot
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, pred_match_gold=None):
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema =None, pred_match_gold=None):
         self.nl = nl
         self.hint = hint
         self.pred = pred
