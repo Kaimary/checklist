@@ -149,7 +149,8 @@ class SemanticCheckTestClass(TestClass):
             # for b in bugs: print(f"level: {b.level}, desc: {b.description}")
             # Hard-code for spider to ignore `column type mismathes aggregation` bugs
             if "spider" in self.db_path: bugs = [bug for bug in bugs if not isinstance(bug, str) and "but function" not in bug.description]
-            if bugs: logging.info("\nBugs found:\n{}".format("\n".join(bug.description for bug in bugs)))
+            if bugs: 
+                logging.info("\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug for bug in bugs)))
             ret.test_fixtures.bugs = bugs
             outputs.append(self._form_instance(len(outputs), ret))
             del parsed_query
@@ -166,12 +167,12 @@ class OracleResultTestClass(TestClass):
         # If exists, prompt LLM to make sure required columns/values existed.
         self.matched_conditions, self.matched_keys = {}, {}
         try:
-            start=time.time()
+            # start=time.time()
             parsed_query = Query(self.sql, self.red_schema)
             self.matched_conditions = parsed_query.check_conditions()
             self.matched_keys = parsed_query.check_keys()
-            end = time.time()
-            print(f"RED took {end - start:.2f} seconds.")
+            # end = time.time()
+            # print(f"RED took {end - start:.2f} seconds.")
         except Exception as e:
             print(e)
 
@@ -213,7 +214,7 @@ class OracleResultTestClass(TestClass):
             schema_with_descriptions=schema_with_descriptions,
             include_value_description=True
         )
-        self.max_retry = self.num * 3 # increase the max retry to 3 times of num for this test class
+        self.max_retry = self.num * 1 # increase the max retry to 3 times of num for this test class
         start = time.time()
         self.test_cases = self._generator()
         end = time.time()
@@ -497,13 +498,13 @@ class OracleResultTestClass(TestClass):
         ret.test_fixtures.db = os.path.join(TEST_INSTANCE_ROOT_PATH, f"{self.db_id}.sqlite")
         logging.info(f"Creating test database at \"{ret.test_fixtures.db}\" ...")
         if not self.schema_pruned:
-            duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db, reset=True)
+            duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db)
         else:
             create_sqlite_database(ret.test_fixtures.db, self.schema_string)
         for t, rows in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-            database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.label_result)
+        # # test case serialization
+        # self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
+        #     database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.label_result)
         
         return ret
     
@@ -1141,7 +1142,7 @@ class QueryReviewTestClass(TestClass):
         self.schema = red_schema
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
-            model_type=ModelType.DEFAULT,
+            model_type=ModelType.GPT_5_1,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )        
         self.test_cases = self._generator()

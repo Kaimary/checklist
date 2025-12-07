@@ -35,33 +35,45 @@ sqlite_reserved_keywords = [
     "WITH", "WITHOUT"
 ]
 
-
-def duplicate_sqlite_database(src_db_path, dest_db_path, reset=False):
-    source = sqlite3.connect(src_db_path)
+def duplicate_sqlite_database(src_db_path, dest_db_path):
+    src = sqlite3.connect(src_db_path)
     dest = sqlite3.connect(dest_db_path)
-
-    # Copy using the backup function
-    with dest:
-        source.backup(dest)
     
-    if reset: # Empty data instance
-        cursor = dest.cursor()
-        # Get all table names (excluding SQLite internal tables)
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        tables = cursor.fetchall()
-        # Disable foreign key checks temporarily to avoid constraint issues
-        cursor.execute("PRAGMA foreign_keys = OFF")
-        for (table_name,) in tables:
-            if table_name.upper() in sqlite_reserved_keywords: table_name = f'"{table_name}"'
-            cursor.execute(f"DELETE FROM {table_name}")
-        # Re-enable foreign keys
-        cursor.execute("PRAGMA foreign_keys = ON")
-        dest.commit()
-
-    source.close()
+    query = "SELECT sql FROM sqlite_master WHERE type='table'"
+    for (sql,) in src.execute(query):
+        if sql:
+            dest.execute(sql)
+    
+    dest.commit()
+    src.close()
     dest.close()
-    # print(f"Database copied from {os.path.basename(src_db_path)} to {dest_db_path}")
-    return
+
+# def duplicate_sqlite_database(src_db_path, dest_db_path, reset=False):
+#     source = sqlite3.connect(src_db_path)
+#     dest = sqlite3.connect(dest_db_path)
+
+#     # Copy using the backup function
+#     with dest:
+#         source.backup(dest)
+    
+#     if reset: # Empty data instance
+#         cursor = dest.cursor()
+#         # Get all table names (excluding SQLite internal tables)
+#         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+#         tables = cursor.fetchall()
+#         # Disable foreign key checks temporarily to avoid constraint issues
+#         cursor.execute("PRAGMA foreign_keys = OFF")
+#         for (table_name,) in tables:
+#             if table_name.upper() in sqlite_reserved_keywords: table_name = f'"{table_name}"'
+#             cursor.execute(f"DELETE FROM {table_name}")
+#         # Re-enable foreign keys
+#         cursor.execute("PRAGMA foreign_keys = ON")
+#         dest.commit()
+
+#     source.close()
+#     dest.close()
+#     # print(f"Database copied from {os.path.basename(src_db_path)} to {dest_db_path}")
+#     return
 
 def insert_rows_into_table(db_path, table_name, rows):
     """
