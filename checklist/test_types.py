@@ -24,6 +24,7 @@ class SEM(AbstractTest):
                          capability=capability, description=description)
     
     def set(self, **kwargs):
+        self.backbone = kwargs.get("backbone", None)
         self.nl = kwargs.get("nl", None)
         self.hint = kwargs.get("hint", None)
         self.pred = kwargs.get("pred", None)
@@ -33,8 +34,9 @@ class SEM(AbstractTest):
         self.red_schema = kwargs.get("red_schema", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            MinimumSyntaxTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path),
-            SemanticCheckTestClass(
+            MinimumSyntaxTestClass(backbone_llm_model_name=self.backbone, 
+                                   nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path),
+            SemanticCheckTestClass(backbone_llm_model_name=self.backbone,
                 nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema
             )
         ]
@@ -60,6 +62,7 @@ class ORC(AbstractTest):
                          capability=capability, description=description)
 
     def set(self, **kwargs):
+        self.backbone = kwargs.get("backbone", None)
         self.nl = kwargs.get("nl", None)
         self.hint = kwargs.get("hint", None)
         self.pred = kwargs.get("pred", None)
@@ -68,8 +71,8 @@ class ORC(AbstractTest):
         self.red_schema = kwargs.get("red_schema", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            OracleResultTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, criteria=0.6, num=3)
+            OracleResultTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                                  db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, criteria=0.6, num=3)
         ]
 
 class MTP(AbstractTest):
@@ -94,6 +97,7 @@ class MTP(AbstractTest):
                          capability=capability, description=description)
     
     def set(self, **kwargs):
+        self.backbone = kwargs.get("backbone", None)
         self.nl = kwargs.get("nl", None)
         self.hint = kwargs.get("hint", None)
         self.pred = kwargs.get("pred", None)
@@ -103,10 +107,10 @@ class MTP(AbstractTest):
         self.red_schema = kwargs.get("red_schema", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            # NLRelaxTestClass(
-            #     nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, num=3),
-            NLStrengthenTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3)
+            NLRelaxTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                             db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, num=3),
+            NLStrengthenTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                                  db_id=self.db_id, db_root_path=self.db_root_path, num=3)
         ]
         
 class DIF(AbstractTest):
@@ -131,6 +135,7 @@ class DIF(AbstractTest):
                          capability=capability, description=description)
 
     def set(self, **kwargs):
+        self.backbone = kwargs.get("backbone", None)
         self.nl = kwargs.get("nl", None)
         self.hint = kwargs.get("hint", None)
         self.pred = kwargs.get("pred", None)
@@ -138,16 +143,16 @@ class DIF(AbstractTest):
         self.db_root_path = kwargs.get("db_root_path", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            CrossModelTestClass(
-                nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=3,
+            CrossModelTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                                db_id=self.db_id, db_root_path=self.db_root_path, num=3,
                 model_list=(["resdsql", "codes15b", "dailsql", "llm:deepseek-chat"] \
                             if "spider" in self.db_root_path else ["chess", "cscsql32b", "omnisql32b", "llm:deepseek-chat"]),
             )
         ]
         if "spider" in self.db_root_path:
             self.test_classes.append(
-                SelfConsistencyTestClass(
-                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, criteria=0.3, num=3
+                SelfConsistencyTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                                         db_id=self.db_id, db_root_path=self.db_root_path, criteria=0.3, num=3
                 )
             )
 
@@ -173,6 +178,7 @@ class EXP(AbstractTest):
                          capability=capability, description=description)
         
     def set(self, **kwargs):
+        self.backbone = kwargs.get("backbone", None)
         self.nl = kwargs.get("nl", None)
         self.hint = kwargs.get("hint", None)
         self.pred = kwargs.get("pred", None)
@@ -182,6 +188,8 @@ class EXP(AbstractTest):
         self.red_schema = kwargs.get("red_schema", None)
         self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
-            QueryReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, num=1),
-            NLReviewTestClass(nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path, num=1)
+            QueryReviewTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                                 db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, num=1),
+            NLReviewTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+                              db_id=self.db_id, db_root_path=self.db_root_path, num=1)
         ]

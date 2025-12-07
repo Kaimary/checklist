@@ -62,8 +62,9 @@ class LLMJudge(AbstractJudge):
         return response
     
 class GuardianJudge(AbstractJudge):
-    def __init__(self, *tests):
+    def __init__(self, backbone_llm_model_name, *tests):
         super().__init__()
+        self.backbone = backbone_llm_model_name
         self.suite = TestSuite()
         # Iterate over the provided test classes and add them to the suite
         for test in tests:
@@ -72,6 +73,7 @@ class GuardianJudge(AbstractJudge):
 
     def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema, pred_match_gold=None):
         self.suite.set(
+            backbone=self.backbone,
             nl=nl,
             hint=hint,
             pred=pred,

@@ -138,8 +138,8 @@ class LLM:
                     "total_tokens": raw_output.response_metadata['token_usage']['total_tokens'],
                 }
                 # start=time.time()
-                total_logprob = sum(token['logprob'] for token in raw_output.response_metadata['logprobs']['content'])
-                avg_logprob = total_logprob / len(raw_output.response_metadata['logprobs']['content'])
+                # total_logprob = sum(token['logprob'] for token in raw_output.response_metadata['logprobs']['content'])
+                # avg_logprob = total_logprob / len(raw_output.response_metadata['logprobs']['content'])
                 # end=time.time()
                 # print(f"logprob tooks {end - start:.2f} seconds.")
                 break
