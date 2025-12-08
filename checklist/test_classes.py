@@ -1256,7 +1256,7 @@ class QueryReviewTestClass(TestClass):
                 while n < chat_turn_limit:
                     n += 1
                     assistant_response, user_response = role_play_session.step(input_msg)
-                    tokens += assistant_response.info.get("token_used", 0) + user_response.info.get("token_used", 0)
+                    tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
                     if assistant_response.terminated:
                         print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
                         break
@@ -1358,7 +1358,7 @@ class NLReviewTestClass(TestClass):
                 while n < chat_turn_limit:
                     n += 1
                     assistant_response, user_response = role_play_session.step(input_msg)
-                    tokens += assistant_response.info.get("token_used", 0) + user_response.info.get("token_used", 0)
+                    tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
                     if assistant_response.terminated:
                         print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
                         break
