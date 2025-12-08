@@ -1142,7 +1142,7 @@ class QueryReviewTestClass(TestClass):
         self.schema = red_schema
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
-            model_type=ModelType.GPT_5_1,
+            model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )        
         self.test_cases = self._generator()
@@ -1261,7 +1261,7 @@ class NLReviewTestClass(TestClass):
         super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore", **kwargs)
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
-            model_type=ModelType.GPT_4O_MINI,
+            model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
             model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
         )
         self.test_cases = self._generator()

@@ -1285,7 +1285,7 @@ class FromClause(Clause):
         super().__init__(sql_tokens, db_schema, **clauses)
 
     def parse(self):
-        start=time.time()
+        # start=time.time()
         is_table = True
         sub_query = []
         join_con_tokens = []
@@ -1331,8 +1331,8 @@ class FromClause(Clause):
             self.join_conds.append(JointPredicate(join_con_tokens, self.db_schema))
 
         self.ops = self.join_conds + self.sub_queries + self.db_schema.query_tabs
-        end=time.time()
-        print(f"FROM clause parse {end - start:.2f} seconds.")
+        # end=time.time()
+        # print(f"FROM clause parse {end - start:.2f} seconds.")
         return
 
     def check(self):
@@ -1429,10 +1429,10 @@ class WhereClause(Clause):
 
     def parse(self):
         # Parse where predicates
-        start=time.time()
+        # start=time.time()
         self.predicates = JointPredicate(self.sql_tokens[1:], self.db_schema)
-        end=time.time()
-        print(f"WHERE clause parse {end - start:.2f} seconds.")
+        # end=time.time()
+        # print(f"WHERE clause parse {end - start:.2f} seconds.")
         self.ops = [self.predicates]
         return
 
