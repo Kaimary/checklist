@@ -34,7 +34,7 @@ class MinimumSyntaxTestClass(TestClass):
         ret.results.status = ret.test_fixtures.status
         ret.results.standard = "status is OK"
         passed = ret.results.status == "OK"
-        return passed, ret.test_fixtures, ret.results, None, None
+        return passed, ret.test_fixtures, ret.results, None, 0
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -94,7 +94,7 @@ class SemanticCheckTestClass(TestClass):
         ret.results.pred = [bug for bug in ret.test_fixtures.bugs if type(bug) == str or bug.level == BugLevel.ERROR]
         ret.results.standard = "pred is empty"
         passed = self._compare_query_results(ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, None, None
+        return passed, ret.test_fixtures, ret.results, None, 0
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -904,7 +904,7 @@ class CrossModelTestClass(TestClass):
         except:
             ret.results.target = None
             passed = False
-        return passed, ret.test_fixtures, ret.results, None, None
+        return passed, ret.test_fixtures, ret.results, None, 0
     
     def _validate_test_fixture(self, candidates):
         def __sql_executable_check(candidate, db_path):
