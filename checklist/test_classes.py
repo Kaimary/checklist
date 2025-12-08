@@ -856,7 +856,7 @@ class CrossModelTestClass(TestClass):
             "cscsql7b": CSCSQL7b,
             "cscsql32b": CSCSQL32b,
             "chess": CHESS,
-            "omnisql": OMNISQL32b,
+            "omnisql32b": OMNISQL32b,
             "resdsql": RESDSQL,
             "dailsql": DAILSQL,
             "codes15b": CODES15b,
