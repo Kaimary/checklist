@@ -36,12 +36,16 @@ sqlite_reserved_keywords = [
 ]
 
 def duplicate_sqlite_database(src_db_path, dest_db_path):
+    # 删除旧文件
+    if os.path.exists(dest_db_path):
+        os.remove(dest_db_path)
+        
     src = sqlite3.connect(src_db_path)
     dest = sqlite3.connect(dest_db_path)
     
     query = "SELECT sql FROM sqlite_master WHERE type='table'"
     for (sql,) in src.execute(query):
-        if sql:
+        if sql and "sqlite_sequence" not in sql.lower():
             dest.execute(sql)
     
     dest.commit()

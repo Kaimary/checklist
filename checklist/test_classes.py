@@ -342,6 +342,8 @@ class OracleResultTestClass(TestClass):
                 )
             return True
         def __extract_column_types_from_schema_string(schema_string):
+            constraints = ('primary key', 'foreign key', 'unique', 'check', 'constraint')
+
             res = {}
             ddl_regex = re.compile(r"CREATE TABLE.*?\);", re.DOTALL | re.IGNORECASE)
             ddl_commands = ddl_regex.findall(schema_string)
@@ -354,7 +356,9 @@ class OracleResultTestClass(TestClass):
                 types = []
                 for column_def in definitions:
                     column_def = column_def.strip()
-                    if 'foreign key' in column_def.lower(): continue
+                    # if 'foreign key' in column_def.lower(): continue
+                    # 跳过表级约束
+                    if column_def.lower().startswith(constraints): continue
                     match = type_regex.search(column_def)
                     if match:
                         types.append(match.group(1).upper())
