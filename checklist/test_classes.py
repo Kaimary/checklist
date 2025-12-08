@@ -34,7 +34,7 @@ class MinimumSyntaxTestClass(TestClass):
         ret.results.status = ret.test_fixtures.status
         ret.results.standard = "status is OK"
         passed = ret.results.status == "OK"
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, None, None
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -94,7 +94,7 @@ class SemanticCheckTestClass(TestClass):
         ret.results.pred = [bug for bug in ret.test_fixtures.bugs if type(bug) == str or bug.level == BugLevel.ERROR]
         ret.results.standard = "pred is empty"
         passed = self._compare_query_results(ret.results.pred)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, None, None
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -189,7 +189,7 @@ class OracleResultTestClass(TestClass):
                     columns_string=', '.join(self.matched_conditions.keys()) if self.matched_conditions else None,
                     keys_string=', '.join([f"{t}.{c}" for t, c in self.matched_keys.items()]) if self.matched_keys else None,
                     error_string='\n'.join(error) if error else None)
-                response = self.backbone(prompt, parser, request_kwargs={
+                response, _ = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl,
                     "DATABASE_SCHEMA": json.dumps(self.schema, indent=4)
@@ -265,7 +265,7 @@ class OracleResultTestClass(TestClass):
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
     
     def _validate_pruned_schema(self, response):
         def __extract_column_name(column_def):
@@ -457,7 +457,7 @@ class OracleResultTestClass(TestClass):
                 prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
                 parser = get_parser(parser_name="oracle_result_checking")
                 while True and retry < self.max_retry:
-                    response2 = self.backbone(prompt, parser, request_kwargs={
+                    response2, _ = self.backbone(prompt, parser, request_kwargs={
                         "HINT": self.hint,
                         "QUESTION": self.nl,
                         "INSTANCES": json.dumps(h['data'], indent=4),
@@ -536,6 +536,7 @@ class OracleResultTestClass(TestClass):
             while(len(outputs) < self.num) and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
+                tokens = 0
                 start=time.time()
                 prompt = get_prompt(
                     template_name="oracle_data_generation", 
@@ -543,7 +544,8 @@ class OracleResultTestClass(TestClass):
                     columns_values_string=__values_to_string(self.matched_conditions) if self.matched_conditions else None,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
+                response, metadata = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
+                tokens += metadata.get("token_used", 0)
                 end=time.time()
                 logging.info(f"oracle_data_generation took {end - start:.2f} seconds.")
                 try:
@@ -558,12 +560,13 @@ class OracleResultTestClass(TestClass):
                     schema_string=self.schema_string
                 )
                 start=time.time()
-                response2 = self.backbone(prompt2, parser2, request_kwargs={
+                response2, metadata2 = self.backbone(prompt2, parser2, request_kwargs={
                     "QUESTION": self.nl,
                     "HINT": self.hint,
                     "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4)
                     }
                 )
+                tokens += metadata2.get("token_used", 0)
                 end=time.time()
                 logging.info(f"oracle_data_verification took {end - start:.2f} seconds.")
                 try:
@@ -573,6 +576,9 @@ class OracleResultTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     retry += 1
                     continue
+                # token usuage and logprobs
+                ret.logprob = metadata2.get("logprob", None)
+                ret.token_used = tokens
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
                 # logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
@@ -597,10 +603,10 @@ class NLRelaxTestClass(TestClass):
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
         res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
         ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
-        logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
+        if len(ret.results.pred) < 10: logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) >= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
     
     def _validate_test_fixture(self, response, history):
         def __response_history_compatible_check(response, history):
@@ -686,18 +692,20 @@ class NLRelaxTestClass(TestClass):
             while len(outputs) < self.num and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
+                tokens = 0
                 prompt = get_prompt(
                     template_name="nl_relaxing_generation", 
                     invalid_queries_string=__error_to_string(invalids) if invalids else None,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.backbone(prompt, parser, 
+                response, metadata = self.backbone(prompt, parser, 
                     request_kwargs={
                         "HINT": self.hint,
                         "QUESTION": self.nl,
                         "QUERY": self.sql
                     }
                 )
+                tokens += metadata.get("token_used", 0)
                 # no constraint found, skip directly
                 if isinstance(response, dict) and 'type' in response.keys() and response['type'] == 'unknown': break
                 try:
@@ -706,9 +714,11 @@ class NLRelaxTestClass(TestClass):
                     retry += 1
                     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    invalids.add((response["sql_mutant"], str(e)))
+                    if "sql_mutant" in response.keys(): invalids.add((response["sql_mutant"], str(e)))
                     continue
                 
+                ret.token_used = tokens
+                ret.logprob = metadata.get("logprob", None)
                 ret.type = response["type"]
                 ret.desc = response["description"]
                 ret.test_fixtures.nl_mutant = response["nl_mutant"]
@@ -733,10 +743,10 @@ class NLStrengthenTestClass(TestClass):
         ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
         res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
         ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
-        logging.info(f"Len of predicted results: {len(ret.results.pred)}, target results: {len(ret.results.target)}")
+        if ret.results.target and len(ret.results.target) < 10: logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) <= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
     
     def _validate_test_fixture(self, response, history):
         def __response_history_compatible_check(response, history):
@@ -805,6 +815,7 @@ class NLStrengthenTestClass(TestClass):
 
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
+        tokens = 0
         invalids = set()
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
@@ -817,13 +828,14 @@ class NLStrengthenTestClass(TestClass):
                     invalid_queries_string=__error_to_string(invalids) if invalids else None,
                     history_string=__history_to_string(history) if history else None
                 )
-                response = self.backbone(prompt, parser, 
+                response, metadata = self.backbone(prompt, parser, 
                     request_kwargs={
                         "HINT": self.hint,
                         "QUESTION": self.nl,
                         "QUERY": self.sql
                     }
                 )
+                tokens += metadata.get("token_used", 0)
                 # no constraint found, skip directly
                 if isinstance(response, dict) and 'type' in response.keys() and response['type'] == 'unknown': break
                 try:
@@ -834,6 +846,9 @@ class NLStrengthenTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     if isinstance(response, dict) and "sql_mutant" in response.keys(): invalids.add(response["sql_mutant"])
                     continue
+                # token usuage and logprobs
+                ret.token_used = tokens
+                ret.logprob = metadata.get("logprob", None)
                 ret.type = response["type"]
                 ret.desc = response["description"]
                 ret.test_fixtures.nl_mutant = response["nl_mutant"]
@@ -889,7 +904,7 @@ class CrossModelTestClass(TestClass):
         except:
             ret.results.target = None
             passed = False
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, None, None
     
     def _validate_test_fixture(self, candidates):
         def __sql_executable_check(candidate, db_path):
@@ -1027,7 +1042,7 @@ class SelfConsistencyTestClass(TestClass):
         ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" else execute_sql(self.db_path, self.sql)
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
     
     def _validate_test_fixture(self, response, history):
         def __output_format_check(response):
@@ -1095,13 +1110,15 @@ class SelfConsistencyTestClass(TestClass):
             while len(outputs) < self.num and retry < self.max_retry:
                 ret = Munch()
                 ret.test_fixtures = Munch()
+                tokens = 0
                 # Generate nl mutants and using the original sql as fake prediction
                 if not self.nl_mutants:
                     prompt = get_prompt(
                         template_name="nl_mutation_generation",
                         history_string=__history_to_string(history) if history else None
                     )
-                    response = self.backbone(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+                    response, metadata = self.backbone(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+                    tokens += metadata.get("token_used", 0)
                     try:
                         self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
                     except ValidationError as e:
@@ -1133,6 +1150,8 @@ class SelfConsistencyTestClass(TestClass):
                     response = {"nl": self.nl_mutants[self.cnt]["question"]}
                     response2 = {"sql": self.nl_mutants_sql_outputs[self.cnt]}
                     self.cnt += 1
+                ret.token_used = tokens
+                ret.logprob = metadata.get("logprob", None)
                 ret.test_fixtures.nl_mutant = response["nl"]
                 ret.test_fixtures.predict_sql = response2["sql"]
                 history.append(ret.test_fixtures)
@@ -1147,7 +1166,7 @@ class QueryReviewTestClass(TestClass):
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
-            model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
+            model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
         )        
         self.test_cases = self._generator()
 
@@ -1162,7 +1181,7 @@ class QueryReviewTestClass(TestClass):
         ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
         
     def _form_instance(self, idx, ret):
         """
@@ -1232,10 +1251,12 @@ class QueryReviewTestClass(TestClass):
                 chat_turn_limit = 10
                 input_msg = role_play_session.init_chat()
                 turns = []
+                tokens = 0
                 # Turn-based simulation
                 while n < chat_turn_limit:
                     n += 1
                     assistant_response, user_response = role_play_session.step(input_msg)
+                    tokens += assistant_response.info.get("token_used", 0) + user_response.info.get("token_used", 0)
                     if assistant_response.terminated:
                         print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
                         break
@@ -1254,7 +1275,9 @@ class QueryReviewTestClass(TestClass):
                     if "CAMEL_TASK_DONE" in user_response.msg.content: break
                     turns.append(parsed_response)
                     input_msg = assistant_response.msg
-            
+
+                ret.token_used = tokens
+                ret.logprob = None
                 ret.test_fixtures.turns = turns
                 outputs.append(self._form_instance(len(outputs), ret))
 
@@ -1266,7 +1289,7 @@ class NLReviewTestClass(TestClass):
         self.backbone = ModelFactory.create(
             model_platform=ModelPlatformType.AZURE,
             model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
-            model_config_dict=ChatGPTConfig().as_dict() # [Optional] the config for model
+            model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
         )
         self.test_cases = self._generator()
 
@@ -1281,7 +1304,7 @@ class NLReviewTestClass(TestClass):
         ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
         
     def _form_instance(self, idx, ret):
         """
@@ -1330,10 +1353,12 @@ class NLReviewTestClass(TestClass):
                 chat_turn_limit = 10
                 turns = []
                 input_msg = role_play_session.init_chat()
+                tokens = 0
                 # Turn-based simulation
                 while n < chat_turn_limit:
                     n += 1
                     assistant_response, user_response = role_play_session.step(input_msg)
+                    tokens += assistant_response.info.get("token_used", 0) + user_response.info.get("token_used", 0)
                     if assistant_response.terminated:
                         print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
                         break
@@ -1355,6 +1380,8 @@ class NLReviewTestClass(TestClass):
                     
                     input_msg = assistant_response.msg
                 
+                ret.token_used = tokens
+                ret.logprob = None
                 ret.test_fixtures.turns = turns
                 outputs.append(self._form_instance(len(outputs), ret))
         

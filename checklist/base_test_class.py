@@ -96,12 +96,15 @@ class TestClass(ABC):
         return None
     
     def run(self):
-        """Run all generated test cases in this test case
+        """Run all generated test cases in this test class
         """
-        passes = []
+        passes, logprobs = [], []
+        total_usage = 0
         fixtures, results = Munch(), Munch()
         for tc in self.test_cases:
-            passed, fixture, result = self.test_fn(tc)
+            passed, fixture, result, logprob, usage = self.test_fn(tc)
+            total_usage += usage
+            logprobs.append(logprob)
             # hard-code for orc special handling
             if hasattr(result, "orc_tag"): continue
             passes.append(passed)
@@ -116,4 +119,4 @@ class TestClass(ABC):
         else: detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
         logging.info(f"Test Class `{self.name}` Total Test Cases: {len(passes)}, Passed: {np.sum(passes)}, Criteria: {self.criteria}")
 
-        return np.array(passes), fixtures, results, detection_result, self.criteria
+        return np.array(passes), fixtures, results, detection_result, self.criteria, logprobs, total_usage

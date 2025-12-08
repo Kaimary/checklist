@@ -47,7 +47,7 @@ CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     "gpt-5.1": {
         "constructor": AzureChatOpenAI,
-        "params": {"model": "gpt-5.1", "temperature": 0} #, "logprobs": True}
+        "params": {"model": "gpt-5.1", "temperature": 0, "logprobs": True}
     },
     "gpt-4o-1120": {
         "constructor": AzureChatOpenAI,
@@ -118,7 +118,7 @@ class LLM:
             self.llm_chain = model
 
     def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 12, backoff_base: int = 2, jitter_max: int = 60) -> Any:
-        output, usage_metadata = None, None
+        output, metadata = None, None
         for attempt in range(max_attempts):
             try:
                 prompt_text = prompt.invoke(request_kwargs).messages[0].content
@@ -132,16 +132,11 @@ class LLM:
                 #         f"\t- out tokens: {raw_output.response_metadata['token_usage']['completion_tokens']}\n"
                 #         f"\t- prompt tokens: {raw_output.response_metadata['token_usage']['prompt_tokens']}\n"
                 #         f"\t- total tokens: {raw_output.response_metadata['token_usage']['total_tokens']}")
-                usage_metadata={
-                    "input_tokens": raw_output.response_metadata['token_usage']['prompt_tokens'],
-                    "output_tokens": raw_output.response_metadata['token_usage']['completion_tokens'],
-                    "total_tokens": raw_output.response_metadata['token_usage']['total_tokens'],
+                total_logprob = sum(token['logprob'] for token in raw_output.response_metadata['logprobs']['content'])
+                metadata={
+                    "token_used": raw_output.response_metadata['token_usage']['total_tokens'],
+                    "logprob": total_logprob / len(raw_output.response_metadata['logprobs']['content'])
                 }
-                # start=time.time()
-                # total_logprob = sum(token['logprob'] for token in raw_output.response_metadata['logprobs']['content'])
-                # avg_logprob = total_logprob / len(raw_output.response_metadata['logprobs']['content'])
-                # end=time.time()
-                # print(f"logprob tooks {end - start:.2f} seconds.")
                 break
             except OutputParserException as e:
                 print(e)
@@ -156,4 +151,4 @@ class LLM:
                     time.sleep(sleep_time)
                 else:
                     raise e  
-        return output
+        return output, metadata

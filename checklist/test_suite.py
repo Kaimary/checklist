@@ -311,6 +311,8 @@ class TestSuite:
                 t.test_classes[idx].name: {
                     "total": len(tc.passed),
                     "passed": int(np.sum(tc.passed)),
+                    "logprobs": tc.logprobs,
+                    "tokens_used": tc.tokens_used,
                     "criteria": tc.criteria
                 }
                 for idx, tc in enumerate(t.results.test_classes)
