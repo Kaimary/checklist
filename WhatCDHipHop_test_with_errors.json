@@ -1,0 +1,170 @@
+[
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "what year was each specific entry released?",
+        "query": "SELECT \n    id AS entry_id, \n    groupYear AS release_year\nFROM \n    torrents;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "what are the entries by each specific artist/group?",
+        "query": "SELECT \n    artist, \n    groupName, \n    COUNT(*) AS entry_count\nFROM \n    torrents\nGROUP BY \n    artist, \n    groupName\nORDER BY \n    artist, \n    groupName;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "which tags exist?",
+        "query": "SELECT DISTINCT tag\nFROM tags;",
+        "label": true
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "what release types are captured in this data set?",
+        "query": "SELECT DISTINCT releaseType\nFROM torrents\nWHERE releaseType IS NOT NULL;",
+        "label": true
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Find me top 5 most popular releases after 2000?",
+        "query": "SELECT \n    t.groupName, \n    t.artist, \n    t.groupYear, \n    t.releaseType, \n    t.totalSnatched\nFROM \n    torrents t\nWHERE \n    t.groupYear > 2000\nORDER BY \n    t.totalSnatched DESC\nLIMIT 5;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which albums have been downloaded more than 100 times?",
+        "query": "SELECT \n    groupName, \n    artist, \n    groupYear \nFROM \n    torrents \nWHERE \n    totalSnatched > 100;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Name the most popular release on houston.",
+        "query": "SELECT \n    groupName, \n    artist, \n    groupYear, \n    releaseType, \n    totalSnatched \nFROM \n    torrents \nORDER BY \n    totalSnatched DESC \nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Name the most popular and least popular releases of lasean camry?",
+        "query": "SELECT \n    groupName, \n    totalSnatched \nFROM \n    torrents \nWHERE \n    artist = 'lasean camry'\nORDER BY \n    totalSnatched DESC;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Find me top 10 albums ranked by their popularity.",
+        "query": "SELECT \n    groupName AS album_name,\n    SUM(totalSnatched) AS total_popularity\nFROM \n    torrents\nGROUP BY \n    groupName\nORDER BY \n    total_popularity DESC\nLIMIT 10;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Find me the most popular topics since 2010.",
+        "query": "SELECT \n    t.tag AS topic, \n    COUNT(t.tag) AS popularity\nFROM \n    torrents tor\nJOIN \n    tags t\nON \n    tor.id = t.id\nWHERE \n    tor.groupYear >= 2010\nGROUP BY \n    t.tag\nORDER BY \n    popularity DESC;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which year had the minimum number of releases?",
+        "query": "SELECT groupYear, COUNT(*) AS release_count\nFROM torrents\nGROUP BY groupYear\nORDER BY release_count ASC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which release is being downloaded the most?",
+        "query": "SELECT \n    groupName, \n    id, \n    totalSnatched\nFROM \n    torrents\nORDER BY \n    totalSnatched DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Who or which group is most popular in 2015?",
+        "query": "SELECT \n    groupName, \n    SUM(totalSnatched) AS totalPopularity\nFROM \n    torrents\nWHERE \n    groupYear = 2015\nGROUP BY \n    groupName\nORDER BY \n    totalPopularity DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which tag is used for which release title?",
+        "query": "SELECT \n    torrents.groupName AS release_title,\n    tags.tag AS tag\nFROM \n    torrents\nJOIN \n    tags\nON \n    torrents.id = tags.id;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which year has the most released song?",
+        "query": "SELECT \n    groupYear, \n    COUNT(id) AS song_count\nFROM \n    torrents\nGROUP BY \n    groupYear\nORDER BY \n    song_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which artist/group is most productive?",
+        "query": "SELECT \n    artist, \n    COUNT(*) AS release_count\nFROM \n    torrents\nGROUP BY \n    artist\nORDER BY \n    release_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which artist/group has the highest average download of songs?",
+        "query": "SELECT \n    artist,\n    groupName,\n    AVG(totalSnatched) AS average_downloads\nFROM \n    torrents\nGROUP BY \n    artist, groupName\nORDER BY \n    average_downloads DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which year has the most CDs released?",
+        "query": "SELECT \n    groupYear, \n    COUNT(*) AS cd_count\nFROM \n    torrents\nWHERE \n    releaseType = 'CD'\nGROUP BY \n    groupYear\nORDER BY \n    cd_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which CD has been downloaded the most times?",
+        "query": "SELECT \n    groupName, \n    MAX(totalSnatched) AS maxDownloads\nFROM \n    torrents\nWHERE \n    releaseType = 'CD'\nGROUP BY \n    groupName\nORDER BY \n    maxDownloads DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which kind of release type is the most popular?",
+        "query": "SELECT \n    releaseType, \n    COUNT(*) AS popularity\nFROM \n    torrents\nGROUP BY \n    releaseType\nORDER BY \n    popularity DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Whose CDs sells best?",
+        "query": "SELECT \n    artist, \n    SUM(totalSnatched) AS total_snatched\nFROM \n    torrents\nWHERE \n    releaseType = 'CD'\nGROUP BY \n    artist\nORDER BY \n    total_snatched DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "What are the downloaded numbers and their release types?",
+        "query": "SELECT \n    torrents.totalSnatched AS downloaded_numbers, \n    torrents.releaseType AS release_type\nFROM \n    torrents;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "What are the downloaded numbers of 2000s and before 2000?",
+        "query": "SELECT \n    CASE \n        WHEN groupYear <= 2000 THEN '2000s and before'\n        ELSE 'After 2000'\n    END AS period,\n    SUM(totalSnatched) AS total_downloaded\nFROM \n    torrents\nGROUP BY \n    period;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "How many same release titles are there in the table?",
+        "query": "SELECT COUNT(*) AS same_release_titles_count\nFROM (\n    SELECT groupName\n    FROM torrents\n    GROUP BY groupName\n    HAVING COUNT(*) > 1\n) AS duplicate_titles;",
+        "label": true
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "Which artist release the most CDs?",
+        "query": "SELECT \n    artist, \n    COUNT(*) AS cd_count\nFROM \n    torrents\nWHERE \n    releaseType = 'CD'\nGROUP BY \n    artist\nORDER BY \n    cd_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "How many downloads of ep and album respectively?",
+        "query": "SELECT \n    releaseType,\n    SUM(totalSnatched) AS totalDownloads\nFROM \n    torrents\nWHERE \n    releaseType IN ('ep', 'album')\nGROUP BY \n    releaseType;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "What are the artist/groups that released only one CD?",
+        "query": "SELECT artist\nFROM torrents\nWHERE releaseType = 'CD'\nGROUP BY artist\nHAVING COUNT(*) = 1;",
+        "label": false
+    },
+    {
+        "db_id": "WhatCDHipHop",
+        "question": "What are the actors who have had releases after 2010?",
+        "query": "SELECT DISTINCT artist\nFROM torrents\nWHERE groupYear > 2010;",
+        "label": true
+    }
+]

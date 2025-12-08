@@ -1,0 +1,206 @@
+[
+    {
+        "db_id": "Pesticide",
+        "question": "which foods are captured in the data set?",
+        "query": "SELECT DISTINCT commod \nFROM sampledata15;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "how many samples have unknown countries of origin?",
+        "query": "SELECT COUNT(*) AS unknown_country_count\nFROM sampledata15\nWHERE country IS NULL OR country = '';",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which are the top 10 commodities that have the highest residue during 2015?",
+        "query": "SELECT r.commod, SUM(r.concen) AS total_residue\nFROM resultsdata15 r\nJOIN sampledata15 s ON r.sample_pk = s.sample_pk\nWHERE s.year = '15'  -- Assuming '15' represents the year 2015\nGROUP BY r.commod\nORDER BY total_residue DESC\nLIMIT 10;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Name some imported commodities that are not found in the US.",
+        "query": "SELECT DISTINCT s.commod\nFROM sampledata15 s\nWHERE s.origin <> 'US' \nAND s.commod NOT IN (\n    SELECT r.commod\n    FROM resultsdata15 r\n    JOIN sampledata15 s2 ON r.sample_pk = s2.sample_pk\n    WHERE s2.origin = 'US'\n);",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Tell me the average pesticide residue for each state in the US where food is grown.",
+        "query": "SELECT \n    sd.state, \n    AVG(rd.concen) AS average_pesticide_residue\nFROM \n    sampledata15 sd\nJOIN \n    resultsdata15 rd ON sd.sample_pk = rd.sample_pk\nWHERE \n    sd.commod IS NOT NULL -- Assuming that a non-null commod indicates food\nGROUP BY \n    sd.state;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which varieties of apple typically have higher pesticide levels?",
+        "query": "SELECT \n    s.variety, \n    AVG(r.concen) AS average_pesticide_level\nFROM \n    sampledata15 s\nJOIN \n    resultsdata15 r ON s.sample_pk = r.sample_pk\nWHERE \n    s.commod = 'AP'  -- Assuming 'AP' is the code for apples\nGROUP BY \n    s.variety\nORDER BY \n    average_pesticide_level DESC;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which commodities have the pesticides concentration much higher than their limit for detection?",
+        "query": "SELECT r.commod, r.concen, r.lod\nFROM resultsdata15 r\nWHERE r.concen > r.lod;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Name top 5 labs with the maximum number of testing.",
+        "query": "SELECT lab, COUNT(*) AS test_count\nFROM resultsdata15\nGROUP BY lab\nORDER BY test_count DESC\nLIMIT 5;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which country is the safest in terms of the pesticide concentration found in imported foods?",
+        "query": "SELECT sd.country, AVG(rd.concen) AS average_concentration\nFROM sampledata15 sd\nJOIN resultsdata15 rd ON sd.sample_pk = rd.sample_pk\nWHERE sd.origin = 'IM'  -- Assuming 'IM' indicates imported foods\nGROUP BY sd.country\nORDER BY average_concentration ASC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which is the most popular state in the US in terms of commodities distribution?",
+        "query": "SELECT state, SUM(quantity) AS total_quantity\nFROM sampledata15\nGROUP BY state\nORDER BY total_quantity DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What is the maximum pesticide concentration ever found in a commodity?",
+        "query": "SELECT MAX(concen) AS max_pesticide_concentration\nFROM resultsdata15;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "When is sample 3763 collected?",
+        "query": "SELECT year, month, day \nFROM sampledata15 \nWHERE sample_pk = 3763;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which state has the most apple collected?",
+        "query": "SELECT state, SUM(quantity) AS total_quantity\nFROM sampledata15\nWHERE commod = 'AP'  -- Assuming 'AP' is the code for apple\nGROUP BY state\nORDER BY total_quantity DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which state has grow the most apples?",
+        "query": "SELECT state, SUM(quantity) AS total_apples\nFROM sampledata15\nWHERE commod = 'AP'  -- Assuming 'AP' is the code for apples\nGROUP BY state\nORDER BY total_apples DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "How many class of products are there?",
+        "query": "SELECT COUNT(DISTINCT commtype) AS product_class_count\nFROM sampledata15;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "what's the 4 digit collection code of sample 3763?",
+        "query": "SELECT site \nFROM sampledata15 \nWHERE sample_pk = 3763;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "If sample 6480 is imported, which country is it originally from?",
+        "query": "SELECT country \nFROM sampledata15 \nWHERE sample_pk = 6480;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "How many number of units are there in sample 9628?",
+        "query": "SELECT SUM(quantity) AS total_units\nFROM sampledata15\nWHERE sample_pk = 9628;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the code for test for sample 7498?",
+        "query": "SELECT testclass \nFROM resultsdata15 \nWHERE sample_pk = 7498;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the code for confirmation for the latest sample?",
+        "query": "SELECT confmethod, confmethod2\nFROM resultsdata15\nWHERE sample_pk = (SELECT MAX(sample_pk) FROM resultsdata15);",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which lab has analyzed the most sample?",
+        "query": "SELECT lab, COUNT(*) AS sample_count\nFROM resultsdata15\nGROUP BY lab\nORDER BY sample_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the majority of test classification result?",
+        "query": "SELECT testclass, COUNT(*) AS count\nFROM resultsdata15\nGROUP BY testclass\nORDER BY count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the unit of measure for sample 3879?",
+        "query": "SELECT conunit \nFROM resultsdata15 \nWHERE sample_pk = 3879;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the unit of measure used for the product commodity code PO?",
+        "query": "SELECT DISTINCT conunit\nFROM resultsdata15\nWHERE commod = 'PO';",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the mean result finding for product AP?",
+        "query": "SELECT AVG(CAST(mean AS REAL)) AS mean_result\nFROM resultsdata15\nWHERE commod = 'AP';",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What's the most common extraction method?",
+        "query": "SELECT extract, COUNT(*) AS extraction_count\nFROM resultsdata15\nGROUP BY extract\nORDER BY extraction_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which lab conduct of most number of tests?",
+        "query": "SELECT lab, COUNT(*) AS test_count\nFROM resultsdata15\nGROUP BY lab\nORDER BY test_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which lab is used for testing for prodict AP?",
+        "query": "SELECT DISTINCT lab \nFROM resultsdata15 \nWHERE commod = 'AP';",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "How many samples come from other countries?",
+        "query": "SELECT COUNT(*) AS sample_count\nFROM sampledata15\nWHERE country IS NOT NULL AND country <> '';",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What kind of food has been tested 'detect' most?",
+        "query": "SELECT r.commod, COUNT(*) AS detect_count\nFROM resultsdata15 r\nWHERE r.testclass = 'd'  -- Assuming 'detect' corresponds to a specific test class code\nGROUP BY r.commod\nORDER BY detect_count DESC\nLIMIT 1;",
+        "label": true
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which state produce the most organic food?",
+        "query": "SELECT state, SUM(quantity) AS total_quantity\nFROM sampledata15\nWHERE commtype = 'OR'  -- Assuming 'OR' represents organic food\nGROUP BY state\nORDER BY total_quantity DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Where do the US import the most food ?",
+        "query": "SELECT country, SUM(quantity) AS total_imports\nFROM sampledata15\nWHERE state = 'US'\nGROUP BY country\nORDER BY total_imports DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "What kind of food has been test the most?",
+        "query": "SELECT commod, COUNT(*) AS test_count\nFROM resultsdata15\nGROUP BY commod\nORDER BY test_count DESC\nLIMIT 1;",
+        "label": false
+    },
+    {
+        "db_id": "Pesticide",
+        "question": "Which kind of pesticide is the easiest to be tested?",
+        "query": "SELECT pestcode, AVG(concen) AS average_concentration\nFROM resultsdata15\nGROUP BY pestcode\nORDER BY average_concentration DESC\nLIMIT 1;",
+        "label": false
+    }
+]
