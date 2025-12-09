@@ -59,7 +59,7 @@ CONFIGS: Dict[str, Dict[str, Any]] = {
     },
     "deepseek-chat": {
         "constructor": ChatDeepSeek,
-        "params": {"model": "deepseek-chat", "temperature": 0}
+        "params": {"model": "deepseek-chat", "temperature": 0, "logprobs": True}
     }
     # "deepseek-v3.1": {
     #     "constructor": ChatOpenAI,

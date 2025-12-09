@@ -214,7 +214,7 @@ class OracleResultTestClass(TestClass):
             schema_with_descriptions=schema_with_descriptions,
             include_value_description=True
         )
-        self.max_retry = self.num * 1 # increase the max retry to 3 times of num for this test class
+        # self.max_retry = self.num * 1 # increase the max retry to 3 times of num for this test class
         start = time.time()
         self.test_cases = self._generator()
         end = time.time()

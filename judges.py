@@ -53,13 +53,13 @@ class LLMJudge(AbstractJudge):
                 schema_string=self.schema_string,
                 examples_string="placeholder" if self.enable_few_shot else None
             )
-        response = self.model(prompt, parser, request_kwargs={
+        response, metadata = self.model(prompt, parser, request_kwargs={
             "HINT": self.hint, 
             "QUESTION": self.nl,
             "SQL": self.pred
             }
         )
-        return response
+        return response | metadata
     
 class GuardianJudge(AbstractJudge):
     def __init__(self, backbone_llm_model_name, *tests):

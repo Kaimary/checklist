@@ -71,7 +71,7 @@ class TestClass(ABC):
         self.criteria = criteria
 
         self.test_cases = []
-        self.max_retry = self.num * 2
+        self.max_retry = self.num
         self.test_fn = self._test_fn
 
     @abstractmethod

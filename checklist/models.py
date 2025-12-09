@@ -160,9 +160,9 @@ class GenericLLM(BaseNL2SQLModel):
 
     def __call__(self, **kwargs):
         model = LLM(model_name=self.model_name)
-        response = model(
+        response, _ = model(
             prompt=kwargs.get("prompt"),
             parser=kwargs.get("parser"),
             request_kwargs=kwargs.get("request_kwargs", {})
-        )["SQL"].strip()
-        return response
+        )
+        return response["SQL"].strip()
