@@ -57,7 +57,10 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
             elif difficulty == 'challenging': challenging_acc += 1
 
         if judgment['judgment'] and judgment_label == judgment['judgment']: TP += 1
-        elif not judgment['judgment'] and judgment_label != judgment['judgment']: FN += 1
+        elif not judgment['judgment'] and judgment_label != judgment['judgment']: 
+            # print(idx)
+            # print(judgment)
+            FN += 1
         elif judgment['judgment'] and judgment_label != judgment['judgment']: FP += 1
         else: 
             # print(idx)
@@ -84,17 +87,17 @@ def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, db_root_path, data
     judgments = [json.loads(line) for line in open(judgment_file_path)]
     sub_err_type_acc_dict = defaultdict(int)
     sub_err_type_total_dict = defaultdict(int)
+    err_type_acc_dict = defaultdict(int)
+    err_type_total_dict = defaultdict(int)
     TP  = 0  # correct SQL and testing judgment passed=]
     FN  = 0  # correct SQL but testing judgment failed
     FP  = 0  # incorrect SQL but testing judgment falsely passsed
     TN  = 0  # incorrect SQL and testing judgment failed    
     for idx, (ex, judgment) in tqdm(enumerate(zip(data[:len(judgments)], judgments)), total=len(judgments)):
-        # print(idx)
-        db_id = ex['db_id']
-        db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
         for err in ex['error_types']:
             sub_err_type_total_dict[err['sub_error_type']] += 1
-            
+            err_type_total_dict[err['error_type']] += 1
+
         ret = {}
         ret['res'] = 1 if ex['label'] == True else 0
         judgment_label = True if ret['res'] == 1 else False
@@ -104,7 +107,12 @@ def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, db_root_path, data
         if judgment_label == judgment['judgment']: 
             for err in ex['error_types']:
                 sub_err_type_acc_dict[err['sub_error_type']] += 1
+                err_type_acc_dict[err['error_type']] += 1
     
+    print(f"Error Type Evaluation Results of `{judge_name}`:")
+    for name, acc in err_type_acc_dict.items():
+        print(f"{name}: {acc/err_type_total_dict[name]} ({acc}/{err_type_total_dict[name]})")
+
     print(f"Sub-Error Type Evaluation Results of `{judge_name}`:")
     for name, acc in sub_err_type_acc_dict.items():
         print(f"{name}: {acc/sub_err_type_total_dict[name]} ({acc}/{sub_err_type_total_dict[name]})")
