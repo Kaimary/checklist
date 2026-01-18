@@ -46,22 +46,21 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
             # for nl2sql-bugs, we directly use the label in the dataset
             ret['res'] = 1 if ex['label'] == True else 0
         judgment_label = True if ret['res'] == 1 else False
-        if 'judgment' not in judgment.keys() or judgment['judgment'] == "UNDETERMINED":
+        if 'final_judgment' not in judgment.keys() or judgment['final_judgment'] == "UNDETERMINED":
             invalids += 1
-            # print(f"Warning: No judgment found for index {idx}. Skipping this entry.")
             continue
-        if judgment_label == judgment['judgment']: 
+        if judgment_label == judgment['final_judgment']:
             Acc += 1
             if difficulty == 'simple': simple_acc += 1
             elif difficulty == 'moderate': moderate_acc += 1
             elif difficulty == 'challenging': challenging_acc += 1
 
-        if judgment['judgment'] and judgment_label == judgment['judgment']: TP += 1
-        elif not judgment['judgment'] and judgment_label != judgment['judgment']: 
+        if judgment['final_judgment'] and judgment_label == judgment['final_judgment']: TP += 1
+        elif not judgment['final_judgment'] and judgment_label != judgment['final_judgment']: 
             # print(idx)
             # print(judgment)
             FN += 1
-        elif judgment['judgment'] and judgment_label != judgment['judgment']: FP += 1
+        elif judgment['final_judgment'] and judgment_label != judgment['final_judgment']: FP += 1
         else: 
             # print(idx)
             # print(judgment)
@@ -80,7 +79,6 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
     negative_recall = TN / (TN + FP) if TN + FP > 0 else 0
     f1 = 2 * (positive_precision * positive_recall) / (positive_precision + positive_recall) if positive_precision + positive_recall > 0 else 0
     print(f"PP: {positive_precision}, PR: {positive_recall}, NP: {negative_precision}, NR: {negative_recall}, F1: {f1}")
-
 
 def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, db_root_path, data_file_path):
     data = json.load(open(data_file_path))
@@ -101,10 +99,10 @@ def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, db_root_path, data
         ret = {}
         ret['res'] = 1 if ex['label'] == True else 0
         judgment_label = True if ret['res'] == 1 else False
-        if 'judgment' not in judgment:
+        if 'final_judgment' not in judgment:
             print(f"Warning: No judgment found for index {idx}. Skipping this entry.")
             continue
-        if judgment_label == judgment['judgment']: 
+        if judgment_label == judgment['final_judgment']: 
             for err in ex['error_types']:
                 sub_err_type_acc_dict[err['sub_error_type']] += 1
                 err_type_acc_dict[err['error_type']] += 1
