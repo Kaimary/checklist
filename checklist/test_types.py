@@ -30,9 +30,7 @@ class SEM(AbstractTest):
         self.pred = kwargs.get("pred", None)
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
-        self.schema_file_path = kwargs.get("schema_file_path", None)
         self.red_schema = kwargs.get("red_schema", None)
-        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             MinimumSyntaxTestClass(backbone_llm_model_name=self.backbone, 
                                    nl=self.nl, hint=self.hint, sql=self.pred, db_id=self.db_id, db_root_path=self.db_root_path),
@@ -69,7 +67,6 @@ class ORC(AbstractTest):
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
         self.red_schema = kwargs.get("red_schema", None)
-        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             OracleResultTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
                                   db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, criteria=0.6, num=3)
@@ -103,9 +100,7 @@ class MTP(AbstractTest):
         self.pred = kwargs.get("pred", None)
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
-        self.schema_file_path = kwargs.get("schema_file_path", None)
         self.red_schema = kwargs.get("red_schema", None)
-        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             NLRelaxTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
                              db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, num=3),
@@ -141,7 +136,6 @@ class DIF(AbstractTest):
         self.pred = kwargs.get("pred", None)
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
-        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             CrossModelTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
                                 db_id=self.db_id, db_root_path=self.db_root_path, num=3,
@@ -184,12 +178,10 @@ class EXP(AbstractTest):
         self.pred = kwargs.get("pred", None)
         self.db_id = kwargs.get("db_id", None)
         self.db_root_path = kwargs.get("db_root_path", None)
-        self.schema_file_path = kwargs.get("schema_file_path", None)
         self.red_schema = kwargs.get("red_schema", None)
-        self.pred_match_gold = kwargs.get("pred_match_gold", None)
         self.test_classes = [
             QueryReviewTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
                                  db_id=self.db_id, db_root_path=self.db_root_path, red_schema=self.red_schema, num=1),
-            NLReviewTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
-                              db_id=self.db_id, db_root_path=self.db_root_path, num=1)
+            # NLReviewTestClass(backbone_llm_model_name=self.backbone, nl=self.nl, hint=self.hint, sql=self.pred, 
+            #                   db_id=self.db_id, db_root_path=self.db_root_path, num=1)
         ]
