@@ -48,10 +48,16 @@ class SchemaCache:
         return cls._cache[db_id]
 
 class TestClass(ABC):
-    def __init__(self, name, abbrev_name, abbrev_type, nl, hint, sql, db_id, db_root_path, key="nl+sql",
-                 backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0, use_cache=False):
+    def __init__(self, name, abbrev_name, abbrev_type, key="nl+sql", use_cache=False):
         self.name = name
+        self.abbrev_name = abbrev_name
+        self.abbrev_type = abbrev_type
+        self.key = key
 
+        self.use_cache=use_cache
+        self.test_fn = self._test_fn
+
+    def set(self, nl, hint, sql, db_id, db_root_path, backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0):
         self.nl=nl
         self.hint=hint
         self.sql=sql
@@ -61,18 +67,17 @@ class TestClass(ABC):
         self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.schema_string = SchemaCache.get_schema(db_id, self.db_path, db_root_path)
         
-        kwargs = {"nl": self.nl if "nl" in key else None, "sql": self.sql if "sql" in key else None}
-        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, abbrev_type, abbrev_name, self.db_id, hashing(**kwargs))
+        kwargs = {"nl": self.nl if "nl" in self.key else None, "sql": self.sql if "sql" in self.key else None}
+        self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, self.abbrev_type, self.abbrev_name, self.db_id, hashing(**kwargs))
         os.makedirs(self.instance_saved_path, exist_ok=True)
 
         self.backbone = LLM(model_name=backbone_llm_model_name)
         self.num = num
-        self.use_cache=use_cache
+        
         self.criteria = criteria
 
         self.test_cases = []
         self.max_retry = self.num
-        self.test_fn = self._test_fn
 
     @abstractmethod
     def _test_fn(self, ret):
@@ -98,13 +103,14 @@ class TestClass(ABC):
     def run(self):
         """Run all generated test cases in this test class
         """
-        passes, logprobs = [], []
-        total_usage = 0
+        passes, logprobs, traces = [], [], []
+        tokens_used = 0
         fixtures, results = Munch(), Munch()
         for tc in self.test_cases:
-            passed, fixture, result, logprob, usage = self.test_fn(tc)
-            total_usage += usage
+            passed, fixture, result, logprob, usage, trace = self.test_fn(tc)
+            tokens_used += usage
             logprobs.append(logprob)
+            traces.append(trace)
             # hard-code for orc special handling
             if hasattr(result, "orc_tag"): continue
             passes.append(passed)
@@ -117,6 +123,5 @@ class TestClass(ABC):
         if not passes: detection_result = "UNDETERMINED"
         # Verify whether the number of passed test cases meets the criteria
         else: detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
-        logging.info(f"Test Class `{self.name}` Total Test Cases: {len(passes)}, Passed: {np.sum(passes)}, Criteria: {self.criteria}")
 
-        return np.array(passes), fixtures, results, detection_result, self.criteria, logprobs, total_usage
+        return np.array(passes), detection_result, self.criteria, logprobs, tokens_used, traces

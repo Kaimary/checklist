@@ -1,13 +1,11 @@
 import collections
-from collections import defaultdict, OrderedDict
-import logging
 import dill
 import json
-
+import inspect
 import numpy as np
-from .abstract_test import load_test, read_pred_file
-from .test_types import DIF, EXP, MTP, ORC, SEM
+from collections import defaultdict, OrderedDict
 
+from .abstract_test import load_test, read_pred_file
 from .viewer.suite_summarizer import SuiteSummarizer
 
 class TestSuite:
@@ -18,10 +16,22 @@ class TestSuite:
         self.print_fn = print_fn
         self.test_ranges = {}
 
-    def set(self, backbone, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema, pred_match_gold=None):
+    def set(self, backbone, nl, hint, sql, db_id, db_root_path, red_schema):
         for t in self.tests.values():
-            t.set(backbone=backbone, nl=nl, hint=hint, pred=pred, db_id=db_id, db_root_path=db_root_path, 
-                  schema_file_path=schema_file_path, red_schema=red_schema, pred_match_gold=pred_match_gold)
+            sig = inspect.signature(t.set)
+            kwargs = dict(
+                backbone_llm_model_name=backbone,
+                nl=nl,
+                hint=hint,
+                sql=sql,
+                db_id=db_id,
+                db_root_path=db_root_path,
+            )
+
+            if "red_schema" in sig.parameters:
+                kwargs["red_schema"] = red_schema
+            
+            t.set(**kwargs)
 
     @staticmethod
     def from_file(path):
@@ -40,7 +50,7 @@ class TestSuite:
         """
         return load_test(path)
 
-    def add(self, test, name=None, capability=None, description=None, format_example_fn=None, print_fn=None, overwrite=False):
+    def add(self, test, name=None):
         """Adds a test to suite
 
         Parameters
@@ -49,51 +59,30 @@ class TestSuite:
             test
         name : string
             test name. If test has test.name, this is optional.
-        capability : string
-            test capability. If test has test.capability, this is optional.
-        description : string
-            test description. If test has test.capability, this is optional.
-        format_example_fn : function
-            If not None, use this to print a failed example within a test case
-            Arguments: (x, pred, conf, label=None, meta=None)
-        print_fn : function
-            If not None, use this to print a failed test case.
-            Arguments: (xs, preds, confs, expect_results, labels=None, meta=None)
-        overwrite : bool
-            If False, will raise exception if test with same name is already in suite.
-
         """
         if name is None and test.name is None:
             raise(Exception('If test does not have test.name, you must specify a name'))
-        if capability is None and test.capability is None:
-            raise(Exception('If test does not have test.capabiliy, you must specify a capability'))
         if name is None:
             name = test.name
-        if capability is None:
-            capability = test.capability
-        if description is None:
-            description = test.description
-        if name in self.tests and not overwrite:
-            raise(Exception('There is already a test named %s suite. Run with overwrite=True to overwrite' % name))
-        if name in self.info:
-            del self.info[name]
-        type_map = {
-            SEM: 'SEM',
-            MTP: 'MTP',
-            DIF: 'DIF',
-            EXP: 'EXP',
-            ORC: 'ORC',
-        }
-        typez = type_map[type(test)]
+        # if description is None:
+        #     description = test.description
+        # type_map = {
+        #     SEM: 'SEM',
+        #     MTP: 'MTP',
+        #     DIF: 'DIF',
+        #     EXP: 'EXP',
+        #     ORC: 'ORC',
+        # }
+        # typez = type_map[type(test)]
         self.tests[name] = test
-        self.info[name]['capability'] = capability
-        self.info[name]['type'] = typez
-        if description:
-            self.info[name]['description'] = description
-        if format_example_fn:
-            self.info[name]['format_example_fn'] = format_example_fn
-        if print_fn:
-            self.info[name]['print_fn'] = format_example_fn
+        # self.info[name]['capability'] = capability
+        # self.info[name]['type'] = typez
+        # if description:
+        #     self.info[name]['description'] = description
+        # if format_example_fn:
+        #     self.info[name]['format_example_fn'] = format_example_fn
+        # if print_fn:
+        #     self.info[name]['print_fn'] = format_example_fn
 
     def remove(self, name):
         """Removes test from suite
@@ -283,7 +272,7 @@ class TestSuite:
                 print('Running', n)
             t.run(predict_and_confidence_fn, verbose=verbose, **kwargs)
 
-    def run1(self, verbose=True, **kwargs):
+    def run1(self, verbose=True):
         """Runs all tests in the suite
         See run in abstract_test.py .
 
@@ -300,30 +289,21 @@ class TestSuite:
 
         """
         ret = {}
-        detection_results = []
-        passed, failed = 0, 0
+        judgments = []
         for name, t in self.tests.items():
             if verbose: print(f'Running {name}')
-            res = t.run1(verbose=verbose, **kwargs)
-            if isinstance(res, bool): detection_results.append(res)
-            ret[name] = res
-            ret[name + "_details"] = {
-                t.test_classes[idx].name: {
-                    "total": len(tc.passed),
-                    "passed": int(np.sum(tc.passed)),
-                    "logprobs": tc.logprobs,
-                    "tokens_used": tc.tokens_used,
-                    "criteria": tc.criteria
-                }
-                for idx, tc in enumerate(t.results.test_classes)
+            passed, judgment, criteria, logprobs, tokens_used, traces = t.run()
+            if isinstance(judgment, bool): judgments.append(judgment)
+            ret[name] = {
+                "judgment": judgment,
+                "total": len(passed),
+                "passed": int(np.sum(passed)),
+                "logprobs": logprobs,
+                "tokens_used": tokens_used,
+                "criteria": criteria,
+                "traces": traces
             }
-            if res == True: passed += 1
-            else: failed += 1
-            if passed >=4 or failed >=2:
-                logging.warning("At least 2 tests have failed or four tests have passed, early stopping for efficiency.")
-                break
-        ret["judgment"] = any(detection_results) if detection_results else "UNDETERMINED"
-
+        ret["final_judgment"] = any(judgments) if judgments else "UNDETERMINED"
         return ret
             
     def summary(self, types=None, capabilities=None, **kwargs):
@@ -366,32 +346,32 @@ class TestSuite:
             print()
             print()
 
-    def summary1(self, types=None, capabilities=None, **kwargs):
-        """Print stats and example failures for each test.
-        See summary in abstract_test.py
+    def summary1(self, ret, baseline_judgment=None, gold=None):
+        """Print stats for each test comparing with baseline/gold judgments.
 
         Parameters
         ----------
-        types : list(string)
-            If not None, will only show tests of these test types.
-            Options are MFT, INV, and DIR
-        capabilities : list(string)
-            If not None, will only show tests with these capabilities.
         **kwargs : type
             Will be passed as arguments to each test.summary()
 
         """
-        tests = self.tests.keys()
-        for n in tests:
-            if 'format_example_fn' not in kwargs:
-                kwargs['format_example_fn'] = self.info[n].get('format_example_fn', self.format_example_fn)
-            if 'print_fn' not in kwargs:
-                kwargs['print_fn'] = self.info[n].get('print_fn', self.print_fn)
-            self.tests[n].summary1(**kwargs)
+        for k, v in ret.items():
+            if k == "final_judgment": continue
+            test_judgment = v['judgment']
+            if test_judgment is None: 
+                print(f"\033[94m\n{k}: [Skip]\033[0m")
+                continue
+
+            test_evaluation = test_judgment == gold
+            baseline_evaluation = baseline_judgment == gold
+            if not test_evaluation:
+                print(f"\033[94m\n{k}:\033[0m Judgment ({test_judgment})\n\033[92mCorrectness? ❌\033[0m")
+            if baseline_evaluation and not test_evaluation:
+                print(f"\033[92mBeat Baseline? ❌\033[0m")
+                print(f"\033[92m[info] \033[0mTotal Test Cases: {v['total']}, Passed: {v['passed']}, Criteria: {v['criteria']}")
+                print(f"\033[92m[trace]\033[0m")
+                print(v['traces'][0])
             print()
-            print()
-        print()
-        print()
 
     def visual_summary_by_test(self, testname):
         """Displays visual summary for a single test.

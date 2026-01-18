@@ -117,16 +117,22 @@ class LLM:
         else:
             self.llm_chain = model
 
-    def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 12, backoff_base: int = 2, jitter_max: int = 60) -> Any:
+    def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 6, backoff_base: int = 2, jitter_max: int = 60) -> Any:
         output, metadata = None, None
         for attempt in range(max_attempts):
             try:
                 prompt_text = prompt.invoke(request_kwargs).messages[0].content
                 logging.debug(f"prompt: \n\n{prompt_text}\n\n")
                 raw_output = self.llm_chain.invoke(prompt_text)
-                if isinstance(parser, JsonOutputParser): 
+                if isinstance(parser, JsonOutputParser):
+                    # 去掉 // 注释 
                     raw_output.content = re.sub(r'(?<!:)//.*', '', raw_output.content)
+                    # 把 NULL 替换成字符串 "NULL"
                     raw_output.content = re.sub(r'(?<=,\s)NULL\b', '"NULL"', raw_output.content)
+                    # 转义反斜杠 \
+                    raw_output.content = re.sub(r'(".*?")', lambda m: m.group(0).replace('\\', '\\\\'), raw_output.content)
+                    # # 转义双引号 "
+                    # raw_output.content = re.sub(r'(".*?")', lambda m: m.group(0).replace('"', '\\"'), raw_output.content)
                 output = parser.invoke(raw_output)
                 # logging.debug(f"`{self.llm_chain.model_name}` model response: \"{raw_output.content}\"\n"
                 #         f"\t- out tokens: {raw_output.response_metadata['token_usage']['completion_tokens']}\n"

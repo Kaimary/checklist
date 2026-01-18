@@ -7,18 +7,18 @@ from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
 
 class AbstractJudge:
-    def __init__(self):
-        pass
+    def __init__(self, name):
+        self.name = name
 
 class LLMJudge(AbstractJudge):
-    def __init__(self, model_name: str, enable_few_shot, enable_cot):
-        super().__init__()
+    def __init__(self, name, model_name: str, enable_few_shot, enable_cot):
+        super().__init__(name)
         self.model_name = model_name
         self.model = LLM(model_name=model_name)
         self.enable_few_shot = enable_few_shot
         self.enable_cot = enable_cot
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema =None, pred_match_gold=None):
+    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema =None):
         self.nl = nl
         self.hint = hint
         self.pred = pred
@@ -26,7 +26,6 @@ class LLMJudge(AbstractJudge):
         self.db_root_path = db_root_path
         self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
         self.schema_file_path = schema_file_path
-        self.pred_match_gold = pred_match_gold
 
         schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
@@ -62,30 +61,28 @@ class LLMJudge(AbstractJudge):
         return response | metadata
     
 class GuardianJudge(AbstractJudge):
-    def __init__(self, backbone_llm_model_name, *tests):
-        super().__init__()
+    def __init__(self, name, backbone_llm_model_name, *tests):
+        super().__init__(name)
         self.backbone = backbone_llm_model_name
         self.suite = TestSuite()
         # Iterate over the provided test classes and add them to the suite
         for test in tests:
             test_instance = test()  # Create an instance of the test class
-            self.suite.add(test_instance, name=f"{test.__name__} Test", capability=f"{test.__name__.lower()}", description=f"{test.__name__} test for SQL correctness")
+            self.suite.add(test_instance, name=test.__name__)
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema, pred_match_gold=None):
+    def set(self, nl, hint, sql, db_id, db_root_path, red_schema):
         self.suite.set(
             backbone=self.backbone,
             nl=nl,
             hint=hint,
-            pred=pred,
+            sql=sql,
             db_id=db_id,
             db_root_path=db_root_path,
-            schema_file_path=schema_file_path,
-            red_schema=red_schema,
-            pred_match_gold=pred_match_gold
+            red_schema=red_schema
         )
 
     def run(self):
         return self.suite.run1()
     
-    def summary(self):
-        return self.suite.summary1()
+    def summary(self, ret, baseline_judgment, gold):
+        return self.suite.summary1(ret, baseline_judgment, gold)

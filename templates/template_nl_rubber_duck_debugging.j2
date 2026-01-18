@@ -1,5 +1,8 @@
-Using the Rubber Duck Debugging method to validate the correctness of a natural language (NL) query given a SQL query and database phrase by phrase.
-For each phrase, output ONE short sentence explaining whether the SQL query aligns with its intent.
+You are a data science expert.
+Below, you are presented with a database schema, a question (with hint if applicable), and a SQL query.
+Your task is to:
+- Use the Rubber Duck Debugging method to break the question into key phrases, and verify whether the semantics of each phrase is reflected in the SQL query.
+- Determine whether the SQL query's correctness based on the schema and question and provide your final judgement.
 
 Here is the input:
 
@@ -7,15 +10,22 @@ Database Schema:
 ###
 {{DATABASE_SCHEMA}}
 
-NL question with a hint (if available):
+This schema offers an in-depth description of the database's architecture, detailing tables, columns, primary keys, foreign keys, and any pertinent information regarding relationships or constraints. Special attention should be given to the examples listed beside each column, as they directly hint at which columns are relevant to our query.
+
 ###
+Question: 
 {{QUESTION}}
 
-Hint: 
+Hint:
 {{HINT}}
 
-SQL query:
-###
+SQL:
 {{SQL}}
 
-Keep the entire analysis concise and under {{RANDOMNESS1}} turns, with each turn's chain-of-thought under {{RANDOMNESS2}} words.
+Please respond with a valid JSON object structured as follows:
+{% raw %}
+{
+    "chain_of_thought_reasoning": "Your rubber duck debugging process. Keep the analysis concise!",
+    "judgment": true or false (true means the SQL is correct, false means the SQL is incorrect)
+}
+{% endraw %}

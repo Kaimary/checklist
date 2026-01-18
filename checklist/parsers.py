@@ -96,6 +96,14 @@ class MarkDownOutputParser(BaseOutputParser):
             output = output.split("```nl")[1].split("```")[0]
             output = re.sub(r"^\s+", "", output)
             return {"NL": output}
+        # elif "```tbl" in output:
+        #     output = output.split("```tbl")[1].split("```")[0]
+        #     output = re.sub(r"^\s+", "", output)
+        #     return {"table": output}
+        elif "```" in output:
+            output = output.split("```")[1].split("```")[0]
+            output = re.sub(r"^\s+", "", output)
+            return {"table": output}
 
 class SQLRevisionOutput(BaseModel):
     """Model for SQL revision output."""
@@ -103,9 +111,11 @@ class SQLRevisionOutput(BaseModel):
 
 class OracleDataGenerationOutput(BaseModel):
     """Model for oracle data generation output."""
-    chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
     database_instances: Dict[str, Any] = Field(description="The generated data instances based on the database schema")
-    resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
+
+class NoiseDataInjectionOutput(BaseModel):
+    """Model for oracle data generation output."""
+    injected_rows: Dict[str, Any] = Field(description="The injected noise data rows based on the database schema")
 
 class OracleDataVerificationOutput(BaseModel):
     """Model for oracle data verification output."""
@@ -124,6 +134,13 @@ class QueryRelaxingOutput(BaseModel):
     nl_mutant: str = Field(description="the natural language mutant transformed from the orignal natural language after applying the relaxing")
     sql_mutant: str = Field(description="the query mutant transformed from the orignal SQL after applying the relaxing")
 
+class MetamorphicNoiseOutput(BaseModel):
+    """Model for metamorphic noise suggestion output."""
+    chain_of_thought_reasoning: str = Field(description="Explain briefly why the chosen row is irrelevant.")
+    table: str = Field(description="Target table name for inserting the irrelevant row.")
+    column_values: Dict[str, Any] = Field(description="Mapping of column names to example values for the inserted row.")
+    reason: str = Field(description="Short explanation of why the insertion should not affect the SQL result.")
+
 class SchemaPruningParser(BaseModel):
     """Model for schema pruning output."""
     pruned_schema: str = Field(description="The pruned database schema with only the necessary tables and columns.")
@@ -135,6 +152,12 @@ class LLMCoTJudgmentOutput(BaseModel):
 
 class LLMJudgmentOutput(BaseModel):
     """Model for LLM judgment output."""
+    judgment: str = Field(description="Yes or No")
+
+class RubberDuckDebuggingOutput(BaseModel):
+    """Model for LLM judgment output."""
+    phrase_alignment: List[str] = Field(description="phrase alignment")
+    reasoning_summary: str = Field(description="reasoning summary")
     judgment: str = Field(description="Yes or No")
 
 def get_parser(parser_name: str) -> BaseOutputParser:
@@ -162,10 +185,15 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
         "oracle_data_verification": lambda: JsonOutputParser(pydantic_object=OracleDataVerificationOutput),
         "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
+        "metamorphic_noise_generation": lambda: JsonOutputParser(pydantic_object=MetamorphicNoiseOutput),
         "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         "nl_mutation_generation": MarkDownOutputParser,
+        "noise_data_table_determination": MarkDownOutputParser,
+        "noise_data_injection": lambda: JsonOutputParser(pydantic_object=NoiseDataInjectionOutput),
         "llm_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMJudgmentOutput),
+        "nl_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
+        "query_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "llm_cot_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "schema_pruning": lambda: JsonOutputParser(pydantic_object=SchemaPruningParser),
     }

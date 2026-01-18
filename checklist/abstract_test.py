@@ -383,8 +383,8 @@ class AbstractTest(ABC):
         if verbose:
             print(Fore.BLUE + 'Running %d test classes' % len(self.test_classes) + Style.RESET_ALL)
         self.results.test_classes = [
-            Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr, criteria=ctr, logprobs=lb, tokens_used=tu)
-            for pd, fs, rs, dr, ctr, lb, tu in (ut.run() for ut in self.test_classes)
+            Munch(passed=pd, test_fixtures=fs, results=rs, detection_result=dr, criteria=ctr, logprobs=lb, tokens_used=tu, traces=tr)
+            for pd, fs, rs, dr, ctr, lb, tu, tr in (ut.run() for ut in self.test_classes)
         ]
         return all(tc.detection_result for tc in self.results.test_classes) \
             if not all(tc.detection_result == "UNDETERMINED" for tc in self.results.test_classes) else "UNDETERMINED"

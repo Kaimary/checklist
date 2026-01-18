@@ -1,5 +1,4 @@
-import os, re, json, random, copy, logging
-import time
+import os, re, time, json, random, copy, logging, tempfile, shutil, sqlite3
 import numpy as np
 from munch import Munch
 from colorama import Fore, Style
@@ -22,11 +21,13 @@ from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL3
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
-from checklist.database_utils.db_info import get_db_schema_from_json
 
 class MinimumSyntaxTestClass(TestClass):
-    def __init__(self, **kwargs):
-        super().__init__("Minimum Syntax Test Class", "minimum_syntax", "syntax", key="sql", **kwargs)
+    def __init__(self):
+        super().__init__("Minimum Syntax Test Class", "minimum_syntax", "syntax", key="sql")
+    
+    def set(self, **kwargs):
+        super().set(**kwargs)
         self.test_cases = self._generator()
     
     def _test_fn(self, ret: Munch):
@@ -78,9 +79,11 @@ class MinimumSyntaxTestClass(TestClass):
         return outputs
 
 class SemanticCheckTestClass(TestClass):
-    def __init__(self, red_schema, **kwargs):
-        super().__init__("Semantic Check Test Class", "semantic_check", "semantic", key="sql", **kwargs)
+    def __init__(self):
+        super().__init__("Semantic Check Test Class", "semantic_check", "semantic", key="sql")
 
+    def set(self, red_schema, **kwargs):
+        super().set(**kwargs)
         self.schema = red_schema
         self.test_cases = self._generator()
 
@@ -158,9 +161,13 @@ class SemanticCheckTestClass(TestClass):
         return outputs
 
 class OracleResultTestClass(TestClass):
-    def __init__(self, red_schema, pruning_threshold=20, **kwargs):
-        super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl", **kwargs)
+    def __init__(self):
+        super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl")
 
+    def set(self, red_schema, pruning_threshold=20, **kwargs):
+        super().set(**kwargs)
+        self.num=3
+        self.criteria=0.6
         self.red_schema = red_schema
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
@@ -218,8 +225,8 @@ class OracleResultTestClass(TestClass):
         start = time.time()
         self.test_cases = self._generator()
         end = time.time()
-        logging.info(f"Generate tests took {end - start:.2f} seconds.")
-        
+        logging.info(f"Generate tests took {end - start:.2f} seconds.")   
+
     def _compare_query_results(self, preds, oracles):
         def __freeze(obj):
             """Recursively convert unhashable objects into hashable equivalents."""
@@ -265,7 +272,7 @@ class OracleResultTestClass(TestClass):
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
     
     def _validate_pruned_schema(self, response):
         def __extract_column_name(column_def):
@@ -511,7 +518,7 @@ class OracleResultTestClass(TestClass):
         #     database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.label_result)
         
         return ret
-    
+
     def _generator(self, verbose=True):
         def __history_to_string(history):
             return "\n".join(
@@ -534,6 +541,7 @@ class OracleResultTestClass(TestClass):
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while(len(outputs) < self.num) and retry < self.max_retry:
+                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 tokens = 0
@@ -579,6 +587,7 @@ class OracleResultTestClass(TestClass):
                 # token usuage and logprobs
                 ret.logprob = metadata2.get("logprob", None)
                 ret.token_used = tokens
+                ret.trace = trace
                 ret.test_fixtures.data = response["database_instances"]
                 ret.test_fixtures.label_result = response2["resulting_data"]
                 # logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
@@ -588,8 +597,12 @@ class OracleResultTestClass(TestClass):
         return outputs
 
 class NLRelaxTestClass(TestClass):
-    def __init__(self, red_schema, **kwargs):
-        super().__init__("Natural Language Relaxing Test Class", "nl_relax", "metamorphic", **kwargs)
+    def __init__(self):
+        super().__init__("Natural Language Relaxing Test Class", "nl_relax", "metamorphic")
+        
+    def set(self, red_schema, **kwargs):
+        super().set(**kwargs)
+        self.num=3
         self.schema = red_schema
         self.test_cases = self._generator()
 
@@ -606,7 +619,7 @@ class NLRelaxTestClass(TestClass):
         if len(ret.results.pred) < 10: logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) >= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
     
     def _validate_test_fixture(self, response, history):
         def __response_history_compatible_check(response, history):
@@ -690,6 +703,7 @@ class NLRelaxTestClass(TestClass):
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num and retry < self.max_retry:
+                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 tokens = 0
@@ -716,8 +730,12 @@ class NLRelaxTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     if "sql_mutant" in response.keys(): invalids.add((response["sql_mutant"], str(e)))
                     continue
-                
+                trace += f"[nl_mutant] {response['nl_mutant']}\n"
+                trace += f"[sql_mutant] {response['sql_mutant']}\n"
+                trace += f"[description] {response['description']}\n"
+
                 ret.token_used = tokens
+                ret.trace = trace
                 ret.logprob = metadata.get("logprob", None)
                 ret.type = response["type"]
                 ret.desc = response["description"]
@@ -730,8 +748,12 @@ class NLRelaxTestClass(TestClass):
         return outputs
 
 class NLStrengthenTestClass(TestClass):
-    def __init__(self, **kwargs):
-        super().__init__("Natural Language Strengthening Test Class", "nl_strengthen", "metamorphic", **kwargs)
+    def __init__(self):
+        super().__init__("Natural Language Strengthening Test Class", "nl_strengthen", "metamorphic")
+
+    def set(self, **kwargs):
+        super().set(**kwargs)
+        self.num=3
         self.test_cases = self._generator()
 
     def _compare_query_results(self, orgin, mutant):
@@ -746,7 +768,7 @@ class NLStrengthenTestClass(TestClass):
         if ret.results.target and len(ret.results.target) < 10: logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "len(pred) <= len(target)"
         passed = self._compare_query_results(ret.results.target, ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
     
     def _validate_test_fixture(self, response, history):
         def __response_history_compatible_check(response, history):
@@ -815,12 +837,12 @@ class NLStrengthenTestClass(TestClass):
 
         parser = get_parser(parser_name="nl_strengthening_generation")
         history, outputs = [], []
-        tokens = 0
+        tokens, retry = 0, 0
         invalids = set()
-        retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num and retry < self.max_retry:
+                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
                 ret = Munch()
                 ret.test_fixtures = Munch()
                 prompt = get_prompt(
@@ -846,8 +868,13 @@ class NLStrengthenTestClass(TestClass):
                     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                     if isinstance(response, dict) and "sql_mutant" in response.keys(): invalids.add(response["sql_mutant"])
                     continue
+                trace += f"[nl_mutant] {response['nl_mutant']}\n"
+                trace += f"[sql_mutant] {response['sql_mutant']}\n"
+                trace += f"[description] {response['description']}\n"
+
                 # token usuage and logprobs
                 ret.token_used = tokens
+                ret.trace = trace
                 ret.logprob = metadata.get("logprob", None)
                 ret.type = response["type"]
                 ret.desc = response["description"]
@@ -859,10 +886,256 @@ class NLStrengthenTestClass(TestClass):
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
+class NoiseRowTestClass(TestClass):
+    def __init__(self):
+        super().__init__("Noise Row Injection Test Class", "metamorphic_noise", "metamorphic")
+
+    def set(self, **kwargs):
+        super().set(**kwargs)
+        self.num=3
+        self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
+        self.test_cases = self._generator()
+
+    def _compare_query_results(self, preds, oracles):
+        def __freeze(obj):
+            """Recursively convert unhashable objects into hashable equivalents."""
+            if isinstance(obj, dict):
+                return tuple(sorted((k, __freeze(v)) for k, v in obj.items()))
+            elif isinstance(obj, (list, tuple, set)):
+                return tuple(__freeze(x) for x in obj)
+            elif isinstance(obj, np.ndarray):
+                return tuple(obj.tolist())
+            else:
+                return obj
+        def __is_subset(pred, oracle_row):
+            """Check if pred tuple is a subsequence of oracle_row tuple."""
+            n, m = len(pred), len(oracle_row)
+            if n > m:
+                return False
+            # 尝试匹配 pred 在 oracle_row 中的某个连续子序列
+            for i in range(m - n + 1):
+                if oracle_row[i:i+n] == pred:
+                    return True
+            return False
+
+        if not preds or not oracles: return False
+
+        preds_frozen = [__freeze(p) for p in preds]
+        oracle_frozen = [__freeze(o) for o in oracles]
+
+        # relax the comparision if one column matches, cuz `oracles` may include redunctant columns
+        for p in preds_frozen:
+            if not any(__is_subset(p, o) for o in oracle_frozen): return False
+        return True
+    
+    def _test_fn(self, ret: Munch):
+        ret.results = Munch()
+        # Test the original SQL over the noise-injected database with expected execution results
+        res = validate_sql_query(ret.test_fixtures.db, self.sql, max_returned_rows="all")
+        logging.info(f"Validating SQL: {self.sql}")
+        ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
+        res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
+        ret.results.target = res['RESULT'] if res['STATUS'] == 'OK' else None
+        logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
+        ret.results.standard = "pred == target"
+        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+    
+    def _validate_test_fixture(self, response, history):
+        def __output_format_check(response, tables):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
+            if "injected_rows" not in response.keys():
+                raise ValidationError(
+                    f"Output format(key) check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `injected_rows`"
+                )
+            return True
+        def __schema_data_alignment_check(response, tables, column_types, schema):
+            def __normalize_sqlite_type(tp: str) -> str:
+                """Normalize SQLite type (case-insensitive, strip length, etc.)."""
+                tp = tp.upper().strip()
+                # Remove size qualifiers, e.g., VARCHAR(20) -> VARCHAR
+                tp = re.sub(r'\s*\(.*\)', '', tp)
+                return tp
+            # table name validity check
+            tables_in_data = response["injected_rows"].keys()
+            for td in tables_in_data:
+                if td not in tables:
+                    raise ValidationError(
+                        f"Table name checking failed. "
+                        f"Non-existed table name found in generated data: {td} "
+                        f"Existing table names: {','.join(tables)}"
+                    )
+            # column count and data types consistent check
+            sqlite_type_map = {
+                'INT': int,
+                'INTEGER': int,
+                'REAL': float,
+                'TEXT': str,
+                'BLOB': bytes,
+                'NUMERIC': float,
+                'DATE': str,
+                'DATETIME': str,
+                'bool': bool,
+                "VARCHAR": str
+            }
+            data = response["injected_rows"]
+            for t, row in data.items():
+                if not row: continue
+                if len(column_types[t]) != len(row):
+                    raise ValidationError(
+                        f"Schema-data column count mismatch. "
+                        f"Column count of table `{t}` in data row: {len(row)}(e.g., {row}), "
+                        f"Expected column count: {len(column_types[t])}({','.join(schema[t])})"
+                    )
+                
+                for v, tp in zip(row, column_types[t]):
+                    # print(tp)
+                    normalized = __normalize_sqlite_type(tp)
+                    expected_type = sqlite_type_map.get(normalized, str)
+                    try:
+                        if v is not None:
+                            expected_type(v)
+                    except (ValueError, TypeError):
+                        raise ValidationError(
+                            f"Schema-data column type mismatch. "
+                            f"Column type Data: {v} "
+                            f"Expected column type: {expected_type}"
+                        )
+            return True
+        def __response_history_compatible_check(response, history):
+            def __dicts_equal___(d1, d2):
+                if d1.keys() != d2.keys():
+                    return False
+                
+                for key in d1:
+                    v1, v2 = d1[key], d2[key]
+                    # If both are lists, check order-insensitive equality
+                    if isinstance(v1, list) and isinstance(v2, list):
+                        # Convert inner lists to tuples (hashable) for set comparison
+                        set1 = set(tuple(item) for item in v1)
+                        set2 = set(tuple(item) for item in v2)
+                        if set1 != set2:
+                            return False
+                    else:
+                        if v1 != v2:
+                            return False
+                return True
+            
+            for h in history:
+                if __dicts_equal___(response["injected_rows"], h["data"]):
+                    raise ValidationError("Duplicate(`injected_rows`) test case.")
+            return True
+        
+        # output format check
+        table_names = DatabaseManager().get_db_all_tables()
+        __output_format_check(response, table_names)
+        # __resulting_schema_check(response, self.schema if self.schema_pruned else DatabaseManager().get_db_schema())
+        # schema-data alignment check
+        if isinstance(response, dict):
+            column_types= DatabaseManager().get_all_column_types()
+            __schema_data_alignment_check(response, table_names, column_types, self.schema)
+            # response duplication check
+            __response_history_compatible_check(response, history)
+        
+    def _form_instance(self, idx, ret):
+        """
+        Form each single test case, and save related test fixture for serialization. 
+        Format as: <`db-file-with-generated-data`, `to-executed-sql`, `expected-executed-result`>
+        
+        Parameters
+        ----------
+        ret: Dict with `data` and `result` keys
+        No return value
+        """
+        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
+        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
+        
+        # Create test data test_cases
+        ret.test_fixtures.db = os.path.join(TEST_INSTANCE_ROOT_PATH, f"{self.db_id}.sqlite")
+        logging.info(f"Creating test database at \"{ret.test_fixtures.db}\" ...")
+        duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db, reset=False)
+        for t, row in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
+        
+        return ret
+    
+    def _generator(self, verbose=True):
+        def __history_to_string(history):
+            return "\n".join(
+                f"--- Example {i+1} ---\n"
+                f"database_instances: {json.dumps(h['data'], indent=4)}\n\n"
+                # f"resulting_data: {json.dumps(h['label_result'], indent=4)}"
+                for i, h in enumerate(history)
+            )
+
+        # parser = get_parser(parser_name="noise_data_table_determination")
+        parser = get_parser(parser_name="noise_data_injection")
+        history, outputs = [], []
+        retry = 0
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        with spinner:
+            while(len(outputs) < self.num) and retry < self.max_retry:
+                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
+                ret = Munch()
+                ret.test_fixtures = Munch()
+                tokens = 0
+                start=time.time()
+                # prompt = get_prompt(
+                #     template_name="noise_data_table_determination", 
+                #     schema_string=self.schema_string
+                # )
+                # response, metadata = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
+                # tokens += metadata.get("token_used", 0)
+                # try:
+                #     self._validate_test_fixture(response['table'], history)
+                # except ValidationError as e: 
+                #     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                #     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                #     retry += 1
+                #     continue
+                
+                prompt = get_prompt(
+                    template_name="noise_data_injection", 
+                    schema_string=self.schema_string,
+                    history_string=__history_to_string(history) if history else None
+                )
+                response, metadata = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
+                tokens += metadata.get("token_used", 0)
+                try:
+                    self._validate_test_fixture(response, history)
+                except ValidationError as e: 
+                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                    retry += 1
+                    continue
+                end=time.time()
+                logging.info(f"noise_data_injection took {end - start:.2f} seconds.")
+                # token usuage and logprobs
+                ret.logprob = metadata.get("logprob", None)
+                ret.token_used = tokens
+                ret.trace = trace
+                ret.test_fixtures.data = response["injected_rows"]
+                history.append(ret.test_fixtures)
+                outputs.append(self._form_instance(len(outputs), ret))
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
+        return outputs
+    
 class CrossModelTestClass(TestClass):
-    def __init__(self, model_list=["cscsql", "chess", "omnisql", "gpt-4o-mini-0708"], active_model_num=3, **kwargs):
-        super().__init__("Majority Voting Test Class", "majority_vote", "differential", **kwargs)
-        self.active_model_num = active_model_num
+    def __init__(self):
+        super().__init__("Majority Voting Test Class", "majority_vote", "differential")
+        
+    def set(self, **kwargs):
+        super().set(**kwargs)
+        self.num=3
+        self.active_model_num = 3
+        model_list=(["resdsql", "codes15b", "dailsql", "llm:deepseek-chat"] if "spider" in self.db_root_path else \
+                     ["chess", "cscsql32b", "omnisql32b", "llm:deepseek-chat"])
         self.model_pool = self._create_nl2sql_model_pool(model_list)
         self.test_cases = self._generator()
 
@@ -1009,8 +1282,13 @@ class CrossModelTestClass(TestClass):
         return outputs
 
 class SelfConsistencyTestClass(TestClass):
-    def __init__(self, **kwargs):
-        super().__init__("Query Consistency Test Class", "query_consistency", "differential", **kwargs)
+    def __init__(self):
+        super().__init__("Query Consistency Test Class", "query_consistency", "differential")
+    
+    def set(self, **kwargs):
+        super().set(**kwargs)
+        self.num=3
+        self.criteria=0.3
         self.max_retry = self.num # hard-code the max retry to be the number of test cases
         self.cnt = 0
         self.nl_mutants = None
@@ -1159,15 +1437,140 @@ class SelfConsistencyTestClass(TestClass):
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
+# class QueryReviewTestClass(TestClass):
+#     def __init__(self):
+#         super().__init__("Step-through Query Review Test Class", "query_review", "explore")
+
+#     def set(self, red_schema, **kwargs):
+#         super().set(**kwargs)
+#         self.schema = red_schema
+#         self.backbone = ModelFactory.create(
+#             model_platform=ModelPlatformType.AZURE,
+#             model_type=ModelType.GPT_4O_MINI if self.backbone.model_name == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
+#             model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
+#         )
+#         self.test_cases = self._generator()
+
+#     def _compare_query_results(self, preds, targets):
+#         for pred, target in zip(preds, targets):
+#             if pred != target: return False
+#         return True
+    
+#     def _test_fn(self, ret: Munch):
+#         ret.results = Munch()
+#         ret.results.pred = [turn['status'] for turn in ret.test_fixtures.turns]
+#         ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
+#         ret.results.standard = "pred == target"
+#         passed = self._compare_query_results(ret.results.pred, ret.results.target)
+#         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+        
+#     def _form_instance(self, idx, ret):
+#         """
+#         Form each single test case, and save related test fixture for serialization. 
+        
+#         Parameters
+#         ----------
+#         ret: Dict with `turns` key
+#         No return value
+#         """
+#         TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
+#         os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
+        
+#         # test case serialization
+#         self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, turns=ret.test_fixtures.turns)
+        
+#         return ret
+    
+#     def _generator(self):
+#         if self.use_cache: return self._load_cached_test_cases()
+
+#         # Obtain query clauses for next debugging purpose
+#         clauses = []
+#         try:
+#             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+#             clauses = list(parsed_query.clauses.keys())
+#         except Exception as e:
+#             print(e)
+        
+#         outputs = []
+#         ret = Munch()
+#         ret.test_fixtures = Munch()
+#         prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
+#         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+#         with spinner:
+#             while len(outputs) < self.num:
+#                 trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
+#                 random.shuffle(clauses)
+#                 task_prompt = prompt.invoke({
+#                     "QUESTION": self.nl,
+#                     "HINT": self.hint,
+#                     "SQL": self.sql,
+#                     "CLAUSES": "- " + ", ".join(clauses) if clauses else "",
+#                     "RANDOMNESS1": str(random.randint(3, 6)),
+#                     "RANDOMNESS2": str(random.randint(15, 40))
+#                     }
+#                 ).messages[0].content
+#                 role_play_session = RolePlaying(
+#                     assistant_role_name="SQL Developer",
+#                     assistant_agent_kwargs=dict(model=self.backbone),
+#                     user_role_name="Rubber Duck Debugging Assistant",
+#                     user_agent_kwargs=dict(model=self.backbone),
+#                     task_prompt=task_prompt,
+#                     with_task_specify=False
+#                 )
+#                 # # Print initial system messages
+#                 # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
+#                 # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
+#                 # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
+#                 # print(
+#                 #     Fore.CYAN
+#                 #     + "Specified task prompt:"
+#                 #     + f"\\n{role_play_session.specified_task_prompt}\\n"
+#                 #     + Style.RESET_ALL
+#                 # )
+#                 # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
+#                 n = 0
+#                 chat_turn_limit = 10
+#                 input_msg = role_play_session.init_chat()
+#                 turns = []
+#                 tokens = 0
+#                 # Turn-based simulation
+#                 while n < chat_turn_limit:
+#                     n += 1
+#                     # trace += f"[input_msg]:{input_msg.content}\n"
+#                     assistant_response, user_response = role_play_session.step(input_msg)
+#                     trace += f"[user_response]:{user_response.msg.content}\n"
+#                     trace += f"[assistant_response]:{assistant_response.msg.content}\n"
+#                     tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
+                    
+#                     # Disable printing animation as it really slows down the test
+#                     # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+#                     # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+                    
+#                     parsed_response = {
+#                         "user_msg": user_response.msg.content,
+#                         **json.loads(assistant_response.msg.content.strip())
+#                     }
+#                     turns.append(parsed_response)
+#                     if parsed_response["status"] == "Error Detected" or "CAMEL_TASK_DONE" in user_response.msg.content: break
+
+#                     input_msg = assistant_response.msg
+
+#                 ret.token_used = tokens
+#                 ret.logprob = None
+#                 ret.test_fixtures.turns = turns
+#                 ret.trace = trace
+#                 outputs.append(self._form_instance(len(outputs), ret))
+
+#         return outputs
+
 class QueryReviewTestClass(TestClass):
-    def __init__(self, red_schema, **kwargs):
-        super().__init__("Step-through Query Review Test Class", "query_review", "explore", **kwargs)
+    def __init__(self):
+        super().__init__("Step-through Query Review Test Class", "query_review", "explore")
+
+    def set(self, red_schema, **kwargs):
+        super().set(**kwargs)
         self.schema = red_schema
-        self.backbone = ModelFactory.create(
-            model_platform=ModelPlatformType.AZURE,
-            model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
-            model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
-        )        
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, targets):
@@ -1177,11 +1580,11 @@ class QueryReviewTestClass(TestClass):
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.pred = [turn['status'] for turn in ret.test_fixtures.turns]
-        ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
+        ret.results.pred = [f"{turn['judgment']}" for turn in ret.test_fixtures.turns]
+        ret.results.target = ['True' for _ in ret.test_fixtures.turns]
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
         
     def _form_instance(self, idx, ret):
         """
@@ -1214,83 +1617,143 @@ class QueryReviewTestClass(TestClass):
         outputs = []
         ret = Munch()
         ret.test_fixtures = Munch()
+        parser = get_parser(parser_name="query_rubber_duck_debugging")
         prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num:
-                random.shuffle(clauses)
-                task_prompt = prompt.invoke({
-                    "QUESTION": self.nl,
-                    "HINT": self.hint,
-                    "SQL": self.sql,
-                    "CLAUSES": "- " + ", ".join(clauses) if clauses else "",
-                    "RANDOMNESS1": str(random.randint(3, 6)),
-                    "RANDOMNESS2": str(random.randint(15, 40))
-                    }
-                ).messages[0].content
-                role_play_session = RolePlaying(
-                    assistant_role_name="SQL Developer",
-                    assistant_agent_kwargs=dict(model=self.backbone),
-                    user_role_name="Rubber Duck Debugging Assistant",
-                    user_agent_kwargs=dict(model=self.backbone),
-                    task_prompt=task_prompt,
-                    with_task_specify=False
-                )
-                # # Print initial system messages
-                # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
-                # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
-                # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
-                # print(
-                #     Fore.CYAN
-                #     + "Specified task prompt:"
-                #     + f"\\n{role_play_session.specified_task_prompt}\\n"
-                #     + Style.RESET_ALL
-                # )
-                # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
-                n = 0
-                chat_turn_limit = 10
-                input_msg = role_play_session.init_chat()
-                turns = []
                 tokens = 0
-                # Turn-based simulation
-                while n < chat_turn_limit:
-                    n += 1
-                    assistant_response, user_response = role_play_session.step(input_msg)
-                    tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
-                    if assistant_response.terminated:
-                        print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
-                        break
-                    if user_response.terminated:
-                        print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
-                        break
-                    
-                    # Disable printing animation as it really slows down the test
-                    # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-                    # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-                    
-                    parsed_response = {
-                        "user_msg": user_response.msg.content,
-                        **json.loads(assistant_response.msg.content.strip())
+                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
+                random.shuffle(clauses)
+                response, metadata = self.backbone(prompt, parser, request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl,
+                    "SQL": self.sql,
+                    "CLAUSES": clauses
                     }
-                    if "CAMEL_TASK_DONE" in user_response.msg.content: break
-                    turns.append(parsed_response)
-                    input_msg = assistant_response.msg
+                )
+                trace += f"{response['chain_of_thought_reasoning']}\n"
+                trace += f"{response['judgment']}"
+                tokens += metadata.get("token_used", 0)
 
                 ret.token_used = tokens
                 ret.logprob = None
-                ret.test_fixtures.turns = turns
+                ret.test_fixtures.turns = [response]
+                ret.trace = trace
                 outputs.append(self._form_instance(len(outputs), ret))
 
         return outputs
 
+# class NLReviewTestClass(TestClass):
+#     def __init__(self):
+#         super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore")
+
+#     def set(self, **kwargs):
+#         super().set(**kwargs)
+#         self.backbone = ModelFactory.create(
+#             model_platform=ModelPlatformType.AZURE,
+#             model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
+#             model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
+#         )
+#         self.test_cases = self._generator()
+
+#     def _compare_query_results(self, preds, targets):
+#         for pred, target in zip(preds, targets):
+#             if pred != target: return False
+#         return True
+    
+#     def _test_fn(self, ret: Munch):
+#         ret.results = Munch()
+#         ret.results.pred = [turn['status'] for turn in ret.test_fixtures.turns]
+#         ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
+#         ret.results.standard = "pred == target"
+#         passed = self._compare_query_results(ret.results.pred, ret.results.target)
+#         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+        
+#     def _form_instance(self, idx, ret):
+#         """
+#         Form each single test case, and save related test fixture for serialization. 
+        
+#         Parameters
+#         ----------
+#         ret: Dict with `turns` key
+#         No return value
+#         """
+#         TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
+#         os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
+        
+#         # test case serialization
+#         self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, turns=ret.test_fixtures.turns)
+        
+#         return ret
+    
+#     def _generator(self):
+#         if self.use_cache: return self._load_cached_test_cases()
+
+#         outputs = []
+#         ret = Munch()
+#         ret.test_fixtures = Munch()
+#         prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
+#         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+#         with spinner:
+#             while len(outputs) < self.num:
+#                 trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
+#                 task_prompt = prompt.invoke({
+#                     "QUESTION": self.nl,
+#                     "HINT": self.hint,
+#                     "SQL": self.sql,
+#                     "RANDOMNESS1": str(random.randint(2, 5)),
+#                     "RANDOMNESS2": str(random.randint(15, 40))
+#                     }
+#                 ).messages[0].content
+#                 role_play_session = RolePlaying(
+#                     assistant_role_name="SQL Developer",
+#                     assistant_agent_kwargs=dict(model=self.backbone),
+#                     user_role_name="Rubber Duck Debugging Assistant",
+#                     user_agent_kwargs=dict(model=self.backbone),
+#                     task_prompt=task_prompt,
+#                     with_task_specify=False
+#                 )
+#                 n = 0
+#                 chat_turn_limit = 10
+#                 turns = []
+#                 input_msg = role_play_session.init_chat()
+#                 tokens = 0
+#                 # Turn-based simulation
+#                 while n < chat_turn_limit:
+#                     n += 1
+#                     assistant_response, user_response = role_play_session.step(input_msg)
+#                     trace += f"[user_response]:{user_response.msg.content}\n"
+#                     trace += f"[assistant_response]:{assistant_response.msg.content}\n"
+#                     tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
+
+#                     # print(f"\033[94mAI User:\n\n{user_response.msg.content}\033[0m", flush=True)
+#                     # print(f"\033[92mAI Assistant:\n\n{assistant_response.msg.content}\033[0m", flush=True)
+#                     # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
+#                     # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
+                    
+#                     parsed_response = {
+#                         "user_msg": user_response.msg.content,
+#                         **json.loads(assistant_response.msg.content.strip())
+#                     }
+#                     turns.append(parsed_response)
+#                     if parsed_response["status"] == "Error Detected" or "CAMEL_TASK_DONE" in user_response.msg.content: break
+                    
+#                     input_msg = assistant_response.msg
+                
+#                 ret.token_used = tokens
+#                 ret.logprob = None
+#                 ret.test_fixtures.turns = turns
+#                 ret.trace = trace
+#                 outputs.append(self._form_instance(len(outputs), ret))
+        
+#         return outputs
 class NLReviewTestClass(TestClass):
-    def __init__(self, **kwargs):
-        super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore", **kwargs)
-        self.backbone = ModelFactory.create(
-            model_platform=ModelPlatformType.AZURE,
-            model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
-            model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
-        )
+    def __init__(self):
+        super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore")
+
+    def set(self, **kwargs):
+        super().set(**kwargs)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, targets):
@@ -1300,11 +1763,11 @@ class NLReviewTestClass(TestClass):
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.pred = [turn['status'] for turn in ret.test_fixtures.turns]
-        ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
+        ret.results.pred = [f"{turn['judgment']}" for turn in ret.test_fixtures.turns]
+        ret.results.target = ['True' for _ in ret.test_fixtures.turns]
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
         
     def _form_instance(self, idx, ret):
         """
@@ -1324,65 +1787,31 @@ class NLReviewTestClass(TestClass):
         return ret
     
     def _generator(self):
-        if self.use_cache: return self._load_cached_test_cases()
-
         outputs = []
         ret = Munch()
         ret.test_fixtures = Munch()
+        parser = get_parser(parser_name="nl_rubber_duck_debugging")
         prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num:
-                task_prompt = prompt.invoke({
-                    "QUESTION": self.nl,
-                    "HINT": self.hint,
-                    "SQL": self.sql,
-                    "RANDOMNESS1": str(random.randint(2, 5)),
-                    "RANDOMNESS2": str(random.randint(15, 40))
-                    }
-                ).messages[0].content
-                role_play_session = RolePlaying(
-                    assistant_role_name="SQL Developer",
-                    assistant_agent_kwargs=dict(model=self.backbone),
-                    user_role_name="Rubber Duck Debugging Assistant",
-                    user_agent_kwargs=dict(model=self.backbone),
-                    task_prompt=task_prompt,
-                    with_task_specify=False
-                )
-                n = 0
-                chat_turn_limit = 10
-                turns = []
-                input_msg = role_play_session.init_chat()
                 tokens = 0
-                # Turn-based simulation
-                while n < chat_turn_limit:
-                    n += 1
-                    assistant_response, user_response = role_play_session.step(input_msg)
-                    tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
-                    if assistant_response.terminated:
-                        print(Fore.GREEN + f"AI Assistant terminated. Reason: {assistant_response.info['termination_reasons']}." + Style.RESET_ALL)
-                        break
-                    if user_response.terminated:
-                        print(Fore.GREEN + f"AI User terminated. Reason: {user_response.info['termination_reasons']}." + Style.RESET_ALL)
-                        break
-                    
-                    print(f"\033[94mAI User:\n\n{user_response.msg.content}\033[0m", flush=True)
-                    print(f"\033[92mAI Assistant:\n\n{assistant_response.msg.content}\033[0m", flush=True)
-                    # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-                    # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-                    
-                    parsed_response = {
-                        "user_msg": user_response.msg.content,
-                        **json.loads(assistant_response.msg.content.strip())
+                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"                
+                response, metadata = self.backbone(prompt, parser, request_kwargs={
+                    "HINT": self.hint, 
+                    "QUESTION": self.nl,
+                    "SQL": self.sql
                     }
-                    turns.append(parsed_response)
-                    if "CAMEL_TASK_DONE" in user_response.msg.content: break
-                    
-                    input_msg = assistant_response.msg
+                )
+                trace += f"{response['chain_of_thought_reasoning']}\n"
+                trace += f"{response['judgment']}"
+                tokens += metadata.get("token_used", 0)
                 
+                # token usuage and logprobs
+                ret.logprob = metadata.get("logprob", None)
                 ret.token_used = tokens
-                ret.logprob = None
-                ret.test_fixtures.turns = turns
+                ret.trace = trace
+                ret.test_fixtures.turns = [response]
                 outputs.append(self._form_instance(len(outputs), ret))
         
         return outputs
