@@ -1775,6 +1775,22 @@ class Query:
         "SELECT",
     ]
 
+    _check_order = [
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "GROUP BY",
+        "HAVING",
+        "ORDER BY",
+        "LIMIT",
+        "INTERSECT",
+        "INTERSECT ALL",
+        "UNION",
+        "UNION ALL",
+        "EXCEPT",
+        "EXCEPT ALL",
+    ]
+
     def __init__(self, sql, db_schema=None):
         self.sql = sql.strip().strip(";")
         self._pre_process_sql()
