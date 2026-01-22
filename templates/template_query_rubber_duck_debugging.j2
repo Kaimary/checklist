@@ -2,8 +2,9 @@
 You are a data science expert.
 Below, you are presented with a database schema, a question (with hint if applicable), and a SQL query.
 Your task is to:
-- Use the Rubber Duck Debugging method to break the SQL query into basic clauses, and verify whether the semantics of each clause is reflected in the question.
-- Determine the SQL query's correctness and provide your final judgement.
+- Follow the Rubber Duck Debugging method to examine the SQL query step by step, using the provided intermediate sub-SQL executions.
+- Verify whether the semantics and execution outcomes at each step align with the natural language question.
+- Determine the SQL query's overall correctness and provide your final judgement.
 
 Here is the input:
 
@@ -22,6 +23,9 @@ Hint:
 
 SQL:
 {{SQL}}
+
+Intermediate SQL executions (chronological order, each showing up to 5 rows from the database):
+{{SUBSQLS}}
 
 Please respond with a valid JSON object structured as follows:
 {% raw %}

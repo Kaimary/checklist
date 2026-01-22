@@ -1504,15 +1504,63 @@ class QueryReviewTestClass(TestClass):
         return ret
     
     def _generator(self):
-        if self.use_cache: return self._load_cached_test_cases()
+        def _build_sub_sqls(query: Query):
+            order = [c for c in Query._check_order if c in query.clauses]
+            active = {"SELECT"} if "SELECT" in query.clauses else set()
+            sub_sqls = []
+            for clause in order:
+                if clause == "SELECT":  # 等待最后加入
+                    continue
+                active.add(clause)
+                sql = " ".join(
+                    query.clauses[name].sql_str
+                    for name in Query._check_order
+                    if name in active
+                )
+                sub_sqls.append(sql.strip())
+            return sub_sqls
+        
+        def _format_sub_sqls_with_results(sub_sqls):
+            summary = {
+                "note": "Each step shows the cumulative SQL and up to 5 rows from executing it.",
+                "steps": []
+            }
+            for idx, sub_sql in enumerate(sub_sqls, 1):
+                exec_summary = validate_sql_query(self.db_path, sub_sql, max_returned_rows=10)
+                preview = exec_summary.get("RESULT")
+                if isinstance(preview, list) and len(preview) > 5:
+                    preview = preview[:5]
+                summary["steps"].append(
+                    {
+                        "step": idx,
+                        "sql": sub_sql,
+                        "status": exec_summary.get("STATUS", "UNKNOWN"),
+                        "result_preview": preview,
+                    }
+                )
+            return json.dumps(summary, ensure_ascii=False, indent=2, default=str)
 
         # Obtain query clauses for next debugging purpose
-        clauses = []
+        subsql_context = json.dumps(
+            {
+                "note": "Unable to derive intermediate SQL steps for this query.",
+                "steps": [],
+            },
+            ensure_ascii=False,
+        )
         try:
             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
-            clauses = list(parsed_query.clauses.keys())
+            subsqls = _build_sub_sqls(parsed_query)
+            subsql_context = _format_sub_sqls_with_results(subsqls)
         except Exception as e:
             print(e)
+            subsql_context = json.dumps(
+                {
+                    "note": f"Failed to derive intermediate SQL steps due to: {e}",
+                    "steps": [],
+                },
+                ensure_ascii=False,
+            )
         
         outputs = []
         ret = Munch()
@@ -1524,12 +1572,11 @@ class QueryReviewTestClass(TestClass):
             while len(outputs) < self.num:
                 tokens = 0
                 trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-                random.shuffle(clauses)
                 response, metadata = self.backbone(prompt, parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl,
                     "SQL": self.sql,
-                    "CLAUSES": clauses
+                    "SUBSQLS": subsql_context
                     }
                 )
                 trace += f"{response['chain_of_thought_reasoning']}\n"
