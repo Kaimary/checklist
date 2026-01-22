@@ -1,0 +1,43 @@
+You are a data science expert. 
+Below, you are presented with a database schema and a natural language (NL) question (with a hint).
+
+Your task is to:
+- Read and understand the schema and the NL question.
+- Simulate a minimum database (with data instances) that derives from the schema. If any table does not use in the query, skip it.
+- Ensure the types of the simulated data instances align with the ones defined in the given schema.
+{% if VALUES %}
+- We found some data instances may be relavant with the question, put them into your simulation if possible:
+{{VALUES}}
+{% endif %}
+
+Database Schema
+###
+{{DATABASE_SCHEMA}}
+
+NL Question:
+###
+{{QUESTION}}
+
+Hint:
+{{HINT}}
+
+Return ONLY a valid JSON object with following structure (keys and string values **must** use double quotes `"` — never single quotes `'`):
+{% raw %}
+{
+    "database_instances": {
+        "table1": [["col1_value", "col2_value", ...], ...]
+        "table2": [...]
+        ...
+    }
+    }
+}
+{% endraw %}
+
+{% if HISTORY %}
+Below are previously simulated database instances:
+###
+{{HISTORY}}
+DO NOT repeat any of them! Please generate diverse instances wherever possible.
+{% endif %}
+
+Take a deep breath and produce the JSON output. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

@@ -25,7 +25,7 @@ Please respond with a valid JSON object structured as follows:
 {% raw %}
 {
     "chain_of_thought_reasoning": "Your thought process on how you think. Explain why you get the judgment step by step based on the above information. This is very important!",
-    "judgment": true or false (true means the SQL is correct, false means the SQL is incorrect)
+    "final_judgment": true or false (true means the SQL is correct, false means the SQL is incorrect)
 }
 {% endraw %}
 
@@ -74,7 +74,7 @@ SELECT count(*) FROM head WHERE age  >  56
 
 {
     "chain_of_thought_reasoning": "The question asks for the number of heads of departments that are older than 56. The relevant table is the 'head' table, which contains a column 'age' that indicates the age of each head. The provided SQL counts all records in the 'head' table where the age is greater than 56. This directly answers the question posed. Therefore, the SQL query is correct and accurately reflects the requirements of the question.",
-    "judgment": true
+    "final_judgment": true
 }
 --- Example 2 ---
 ###
@@ -127,7 +127,7 @@ SELECT model_name FROM chip_model EXCEPT SELECT chip_model FROM phone WHERE Accr
 
 {
     "chain_of_thought_reasoning": "The question asks for the names of chip models that are not used by any phone with a full accreditation type. This means to identify chip models that do not appear in the phone table for entries where the Accreditation_type is 'Full'. \n\nThe SQL query uses the EXCEPT operator, which is appropriate for this task. The first part of the query, 'SELECT model_name FROM chip_model', retrieves all chip model names from the chip_model table. The second part, 'SELECT chip_model FROM phone WHERE Accreditation_type = 'Full'', retrieves the chip models that are associated with phones that have a full accreditation type. By using EXCEPT, the query effectively subtracts the second set of results from the first, leaving only those chip models that are not used in any phone with full accreditation. Therefore, I conclude that the SQL query is correct.",
-    "judgment": true
+    "final_judgment": true
 }
 --- Example 3 ---
 ###
@@ -174,7 +174,7 @@ SELECT LOCATION FROM shop WHERE Open_Year > 2012 OR Open_Year < 2008
 
 {
     "chain_of_thought_reasoning": "The question asks for locations that contain shops that opened after 2012 and shops that opened before 2008. This means we need to find locations that have at least one shop meeting each of these criteria. The SQL query provided, however, uses an 'OR' condition, which would return locations with shops that opened either after 2012 or before 2008, rather than requiring both conditions to be true simultaneously. Therefore, the SQL query does not correctly implement the logic needed to answer the question, as it fails to ensure that both conditions are satisfied for the same location.",
-    "judgment": false
+    "final_judgment": false
 }
 {% endif %}
 
