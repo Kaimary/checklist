@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 import logging
@@ -58,6 +59,7 @@ if __name__ == '__main__':
         run_evalution(judge_name=args.judge_name, benchmark_name=args.benchmark_name,
                       judgment_file_path=output_file_path, data_file_path=args.data_file_path, 
                       db_root_path=args.db_root_path, predicted_sql_path=args.predicted_sql_path)
+        sys.exit(0)
     
     time_elapse = 0
     judgments = open(output_file_path, 'a+')
@@ -91,5 +93,5 @@ if __name__ == '__main__':
                   db_root_path=args.db_root_path, predicted_sql_path=args.predicted_sql_path)
     # if not args.benchmark_name in ["spider", "bird"]:
     #     run_nl2sql_bugs_evalution(
-    #         judge_name=args.judge_name, judgment_file_path=output_file_path, data_file_path=args.data_file_path, db_root_path=args.db_root_path)
+    #         judge_name=args.judge_name, judgment_file_path=output_file_path, data_file_path=args.data_file_path)
     # print(f"Log is saved to {log_file_path}\nJudgment results saved to {output_file_path}")

@@ -117,6 +117,10 @@ class NoiseDataInjectionOutput(BaseModel):
     """Model for oracle data generation output."""
     injected_rows: Dict[str, Any] = Field(description="The injected noise data rows based on the database schema")
 
+class NoiseDataAlignmentFixOutput(BaseModel):
+    """Model for repairing injected noise rows."""
+    fixed_rows: Dict[str, Any] = Field(description="Corrected noise data rows keyed by table name")
+
 class OracleDataVerificationOutput(BaseModel):
     """Model for oracle data verification output."""
     chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
@@ -182,8 +186,8 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "candidate_generation": lambda: JsonOutputParser(pydantic_object=SQLGenerationOutput),
         "nl2sql_translation": MarkDownOutputParser,
         "revision": lambda: JsonOutputParser(pydantic_object=SQLRevisionOutput),
-        "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
-        "oracle_data_verification": lambda: JsonOutputParser(pydantic_object=OracleDataVerificationOutput),
+        "simulate_db_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
+        "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataVerificationOutput),
         "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
         "metamorphic_noise_generation": lambda: JsonOutputParser(pydantic_object=MetamorphicNoiseOutput),
         "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
@@ -191,6 +195,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "nl_mutation_generation": MarkDownOutputParser,
         "noise_data_table_determination": MarkDownOutputParser,
         "noise_data_injection": lambda: JsonOutputParser(pydantic_object=NoiseDataInjectionOutput),
+        "noise_data_alignment_fix": lambda: JsonOutputParser(pydantic_object=NoiseDataAlignmentFixOutput),
         "llm_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMJudgmentOutput),
         "nl_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "query_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),

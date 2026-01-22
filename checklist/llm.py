@@ -117,7 +117,7 @@ class LLM:
         else:
             self.llm_chain = model
 
-    def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 6, backoff_base: int = 2, jitter_max: int = 60) -> Any:
+    def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 3, backoff_base: int = 2, jitter_max: int = 60) -> Any:
         output, metadata = None, None
         for attempt in range(max_attempts):
             try:

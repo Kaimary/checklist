@@ -18,14 +18,13 @@ class LLMJudge(AbstractJudge):
         self.enable_few_shot = enable_few_shot
         self.enable_cot = enable_cot
 
-    def set(self, nl, hint, pred, db_id, db_root_path, schema_file_path, red_schema =None):
+    def set(self, nl, hint, pred, db_id, db_root_path, red_schema =None):
         self.nl = nl
         self.hint = hint
         self.pred = pred
         self.db_id = db_id
         self.db_root_path = db_root_path
         self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        self.schema_file_path = schema_file_path
 
         schema = DatabaseManager(db_id=self.db_id, db_root_path=db_root_path).get_db_schema() # type: ignore
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))

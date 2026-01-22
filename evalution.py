@@ -80,7 +80,7 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
     f1 = 2 * (positive_precision * positive_recall) / (positive_precision + positive_recall) if positive_precision + positive_recall > 0 else 0
     print(f"PP: {positive_precision}, PR: {positive_recall}, NP: {negative_precision}, NR: {negative_recall}, F1: {f1}")
 
-def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, db_root_path, data_file_path):
+def run_nl2sql_bugs_evalution(judge_name, judgment_file_path, data_file_path):
     data = json.load(open(data_file_path))
     judgments = [json.loads(line) for line in open(judgment_file_path)]
     sub_err_type_acc_dict = defaultdict(int)

@@ -1,12 +1,7 @@
-import os, re, time, json, random, copy, logging, tempfile, shutil, sqlite3
+import os, re, time, json, random, copy, logging, threading, shutil, sqlite3
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import numpy as np
 from munch import Munch
-from colorama import Fore, Style
-from camel.utils import print_text_animated
-from camel.societies import RolePlaying
-from camel.models import ModelFactory
-from camel.configs import ChatGPTConfig
-from camel.types import ModelPlatformType, ModelType
 
 from checklist.spinner import Spinner
 from checklist.parsers import get_parser
@@ -21,6 +16,191 @@ from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL3
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
+
+class SchemaPruningMixin:
+    """Shared helpers for classes that optionally prune large schemas via LLM."""
+
+    def _quote_identifier(self, identifier: str) -> str:
+        escaped = identifier.replace('"', '""')
+        return f'"{escaped}"'
+
+    def _validate_pruned_schema(self, response):
+        def __extract_column_name(column_def):
+            pattern = r'''
+                (["'])(.*?)\1 |  # Double/single quoted strings
+                (`)(.*?)`      |  # Backtick quoted strings  
+                (\w+)             # Plain words
+            '''
+            match = re.search(pattern, column_def, re.VERBOSE)
+            if match:
+                if match.group(1):
+                    return match.group(2)
+                if match.group(3):
+                    return match.group(4)
+                if match.group(5):
+                    return match.group(5)
+            return None
+
+        schema_generator = DatabaseSchemaGenerator(
+            tentative_schema=DatabaseSchema.from_schema_dict(response),
+            db_id=self.db_id,
+            db_path=self.db_path
+        )
+        ddl_commands = schema_generator._extract_create_ddl_commands()
+        for table_name, ddl_command in ddl_commands.items():
+            ddl_command = re.sub(r'\s+', ' ', ddl_command.strip())
+            create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+            table = create_table_match.group(1).strip()
+            if table != table_name:
+                logging.warning(f"Table name mismatch: {table} != {table_name}")
+            column_definitions = create_table_match.group(2).strip()
+            definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
+            for col in response[table_name]:
+                if all(col not in d for d in definitions):
+                    raise ValidationError(
+                        f"Pruned schema column name checking failed. "
+                        f"Column `{col}` should not in table `{table_name}`❌"
+                    )
+            for column_def in definitions:
+                column_def = column_def.strip()
+                if "primary key" in column_def.lower():
+                    pk_column_name = __extract_column_name(column_def)
+                    if pk_column_name not in response[table_name]:
+                        response[table_name].insert(0, pk_column_name)
+            return True
+
+    def _copy_rows_into_pruned_db(self, target_db_path, schema_subset):
+        dest_conn = sqlite3.connect(target_db_path)
+        src_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        try:
+            dest_cur = dest_conn.cursor()
+            src_cur = src_conn.cursor()
+            for table, columns in schema_subset.items():
+                if not columns:
+                    continue
+                quoted_table = self._quote_identifier(table)
+                quoted_columns = ', '.join(self._quote_identifier(col) for col in columns)
+                select_sql = f"SELECT {quoted_columns} FROM {quoted_table}"
+                try:
+                    src_cur.execute(select_sql)
+                except sqlite3.Error as exc:
+                    logging.warning(
+                        f"Skipping data backfill for table `{table}` during pruned DB build: {exc}"
+                    )
+                    continue
+                placeholders = ', '.join('?' for _ in columns)
+                insert_sql = f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
+                while True:
+                    rows = src_cur.fetchmany(512)
+                    if not rows:
+                        break
+                    try:
+                        dest_cur.executemany(insert_sql, rows)
+                    except sqlite3.Error as exc:
+                        logging.warning(
+                            f"Failed inserting rows into table `{table}` for pruned DB build: {exc}"
+                        )
+                        break
+            dest_conn.commit()
+        finally:
+            src_conn.close()
+            dest_conn.close()
+
+    def _prune_schema_if_needed(
+        self,
+        schema,
+        pruning_threshold,
+        matched_conditions=None,
+        matched_keys=None,
+    ):
+        self.schema_pruned = False
+        self._pruned_db_build_event = None
+        self._pruned_db_build_error = None
+        self._pruned_db_snapshot_path = None
+        if pruning_threshold is None:
+            return schema, False
+        if not any(len(cols) > pruning_threshold for cols in schema.values()):
+            return schema, False
+
+        logging.warning(
+            f"Database {self.db_id} has tables with more than {pruning_threshold} columns. "
+            "Truncating the schema before generation ..."
+        )
+        retry = 0
+        error = set()
+        parser = get_parser(parser_name="schema_pruning")
+        matched_conditions = matched_conditions or {}
+        matched_keys = matched_keys or {}
+
+        while retry < self.max_retry:
+            prompt = get_prompt(
+                template_name="schema_pruning",
+                columns_string=', '.join(matched_conditions.keys()) if matched_conditions else None,
+                keys_string=', '.join([f"{t}.{c}" for t, c in matched_keys.items()]) if matched_keys else None,
+                error_string='\n'.join(error) if error else None
+            )
+            response, _ = self.backbone(
+                prompt,
+                parser,
+                request_kwargs={
+                    "HINT": self.hint,
+                    "QUESTION": self.nl,
+                    "DATABASE_SCHEMA": json.dumps(schema, indent=4)
+                }
+            )
+            try:
+                self._validate_pruned_schema(response)
+                logging.info(f"Pruned schema: {json.dumps(response, indent=4)}")
+                self.schema_pruned = True
+                return response, True
+            except ValidationError as e:
+                error.add(str(e).split('.')[-1])
+                retry += 1
+                logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
+
+        return schema, False
+
+    def _schedule_pruned_db_materialization(self, schema_string, copy_existing_rows=False):
+        if not getattr(self, "schema_pruned", False):
+            return
+        if not schema_string:
+            return
+        if getattr(self, "_pruned_db_build_event", None):
+            return
+        self._pruned_db_snapshot_path = os.path.join(
+            self.instance_saved_path,
+            f"{self.db_id}_pruned_base.sqlite"
+        )
+        schema_subset = copy.deepcopy(self.schema)
+        event = threading.Event()
+        self._pruned_db_build_event = event
+        self._pruned_db_build_error = None
+
+        def _worker():
+            try:
+                os.makedirs(os.path.dirname(self._pruned_db_snapshot_path), exist_ok=True)
+                create_sqlite_database(self._pruned_db_snapshot_path, schema_string)
+                if copy_existing_rows:
+                    self._copy_rows_into_pruned_db(self._pruned_db_snapshot_path, schema_subset)
+            except Exception as exc:
+                self._pruned_db_build_error = exc
+                logging.exception("Failed to build pruned schema database snapshot", exc_info=exc)
+            finally:
+                event.set()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _ensure_pruned_db_snapshot_ready(self):
+        event = getattr(self, "_pruned_db_build_event", None)
+        if not event:
+            return None
+        event.wait()
+        if getattr(self, "_pruned_db_build_error", None):
+            logging.warning(
+                f"Pruned schema snapshot creation failed: {self._pruned_db_build_error}"
+            )
+            return None
+        return getattr(self, "_pruned_db_snapshot_path", None)
 
 class MinimumSyntaxTestClass(TestClass):
     def __init__(self):
@@ -160,7 +340,7 @@ class SemanticCheckTestClass(TestClass):
 
         return outputs
 
-class OracleResultTestClass(TestClass):
+class OracleResultTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl")
 
@@ -168,50 +348,27 @@ class OracleResultTestClass(TestClass):
         super().set(**kwargs)
         self.num=3
         self.criteria=0.6
+        self.parallel_workers = 3
+        self.parser = get_parser(parser_name="simulate_db_generation")
+        self.parser2 = get_parser(parser_name="oracle_data_generation")
         self.red_schema = red_schema
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
         # If exists, prompt LLM to make sure required columns/values existed.
         self.matched_conditions, self.matched_keys = {}, {}
         try:
-            # start=time.time()
             parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
             self.matched_conditions = parsed_query.check_conditions()
             self.matched_keys = parsed_query.check_keys()
-            # end = time.time()
-            # print(f"RED took {end - start:.2f} seconds.")
         except Exception as e:
             print(e)
 
-        self.schema_pruned = False
-        # Prune the `lenthy` schema first, to ensure the quality of generated data 
-        if any(len(cols) > pruning_threshold for cols in self.schema.values()):
-            logging.warning(f"Database {self.db_id} has tables with more than {pruning_threshold} columns. Truncating the schema before generation ...")
-            retry = 0
-            error = set() # Append the error messages to avoid endless llm loop
-            parser = get_parser(parser_name="schema_pruning")
-            while True and retry < self.max_retry:
-                prompt = get_prompt(
-                    template_name="schema_pruning",
-                    columns_string=', '.join(self.matched_conditions.keys()) if self.matched_conditions else None,
-                    keys_string=', '.join([f"{t}.{c}" for t, c in self.matched_keys.items()]) if self.matched_keys else None,
-                    error_string='\n'.join(error) if error else None)
-                response, _ = self.backbone(prompt, parser, request_kwargs={
-                    "HINT": self.hint, 
-                    "QUESTION": self.nl,
-                    "DATABASE_SCHEMA": json.dumps(self.schema, indent=4)
-                    }
-                )
-                try:
-                    self._validate_pruned_schema(response)
-                    self.schema = response
-                    logging.info(f"Pruned schema: {json.dumps(response, indent=4)}")
-                    self.schema_pruned = True
-                    break
-                except ValidationError as e:
-                    error.add(str(e).split('.')[-1])
-                    retry += 1
-                    logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
+        self.schema, self.schema_pruned = self._prune_schema_if_needed(
+            schema=self.schema,
+            pruning_threshold=pruning_threshold,
+            matched_conditions=self.matched_conditions,
+            matched_keys=self.matched_keys
+        )
             
         # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
         schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
@@ -221,11 +378,10 @@ class OracleResultTestClass(TestClass):
             schema_with_descriptions=schema_with_descriptions,
             include_value_description=True
         )
-        # self.max_retry = self.num * 1 # increase the max retry to 3 times of num for this test class
+        self._schedule_pruned_db_materialization(self.schema_string)
         start = time.time()
         self.test_cases = self._generator()
-        end = time.time()
-        logging.info(f"Generate tests took {end - start:.2f} seconds.")   
+        logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
 
     def _compare_query_results(self, preds, oracles):
         def __freeze(obj):
@@ -273,56 +429,6 @@ class OracleResultTestClass(TestClass):
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
-    
-    def _validate_pruned_schema(self, response):
-        def __extract_column_name(column_def):
-            # Pattern to match: quoted strings or plain words
-            pattern = r'''
-                (["'])(.*?)\1 |  # Double/single quoted strings
-                (`)(.*?)`      |  # Backtick quoted strings  
-                (\w+)             # Plain words
-            '''
-            
-            match = re.search(pattern, column_def, re.VERBOSE)
-            if match:
-                # Find which group actually matched
-                if match.group(1):  # Double/single quotes
-                    return match.group(2)
-                elif match.group(3):  # Backticks
-                    return match.group(4)
-                elif match.group(5):  # Plain word
-                    return match.group(5)
-            return None
-
-        schema_generator = DatabaseSchemaGenerator(
-            tentative_schema=DatabaseSchema.from_schema_dict(response), 
-            db_id=self.db_id,
-            db_path=self.db_path
-        )
-        ddl_commands = schema_generator._extract_create_ddl_commands()
-        for table_name, ddl_command in ddl_commands.items():
-            ddl_command = re.sub(r'\s+', ' ', ddl_command.strip())
-            create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
-            table = create_table_match.group(1).strip()
-            if table != table_name:
-                logging.warning(f"Table name mismatch: {table} != {table_name}")
-            column_definitions = create_table_match.group(2).strip()
-            definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
-            for col in response[table_name]:
-                if all(col not in d for d in definitions):
-                    raise ValidationError(
-                        f"Pruned schema column name checking failed. "
-                        f"Column `{col}` should not in table `{table_name}`❌"
-                    )
-            # extra add primary key columns if not included
-            for column_def in definitions:
-                column_def = column_def.strip()
-                if "primary key" in column_def.lower():
-                    pk_column_name = __extract_column_name(column_def)
-                    if pk_column_name not in response[table_name]:
-                        # assuming the primary key column is the first column
-                        response[table_name].insert(0, pk_column_name)
-            return True                 
 
     def _validate_test_fixture(self, response, history, key="database_instances", instances=None):
         def __output_format_check(response, key):
@@ -371,17 +477,6 @@ class OracleResultTestClass(TestClass):
                         types.append(match.group(1).upper())
                 res[table_name] = types
             return res
-        def __resulting_schema_check(response, schema_dict): # deprecated
-            all_columns = []
-            for columns in schema_dict.values():
-                all_columns.extend(columns)
-
-            if any(c not in all_columns for c in response["resulting_data"]["columns"]):
-                raise ValidationError(
-                    f"Resulting schema check failed. "
-                    f"Resulting schema: {', '.join(response['resulting_data']['columns'])}"
-                )
-            return
         def __schema_data_alignment_check(response, tables, column_types, schema):
             def __normalize_sqlite_type(tp: str) -> str:
                 """Normalize SQLite type (case-insensitive, strip length, etc.)."""
@@ -449,9 +544,7 @@ class OracleResultTestClass(TestClass):
                         set2 = set(tuple(item) for item in v2)
                         if set1 != set2:
                             return False
-                    else:
-                        if v1 != v2:
-                            return False
+                    elif v1 != v2: return False
                 return True
             
             for h in history:
@@ -511,7 +604,11 @@ class OracleResultTestClass(TestClass):
         if not self.schema_pruned:
             duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db)
         else:
-            create_sqlite_database(ret.test_fixtures.db, self.schema_string)
+            snapshot_path = self._ensure_pruned_db_snapshot_ready()
+            if snapshot_path and os.path.exists(snapshot_path):
+                shutil.copy2(snapshot_path, ret.test_fixtures.db)
+            else:
+                create_sqlite_database(ret.test_fixtures.db, self.schema_string)
         for t, rows in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
         # # test case serialization
         # self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
@@ -524,7 +621,6 @@ class OracleResultTestClass(TestClass):
             return "\n".join(
                 f"--- Example {i+1} ---\n"
                 f"database_instances: {json.dumps(h['data'], indent=4)}\n\n"
-                # f"resulting_data: {json.dumps(h['label_result'], indent=4)}"
                 for i, h in enumerate(history)
             )
         def __values_to_string(col2vals):
@@ -532,368 +628,170 @@ class OracleResultTestClass(TestClass):
                 f"Column `{col}`: {', '.join(vals)};"
                 for col, vals in col2vals.items()
             )
-        if self.use_cache: return self._load_cached_test_cases()
-        
-        parser = get_parser(parser_name="oracle_data_generation")
-        parser2 = get_parser(parser_name="oracle_data_verification")
+
         history, outputs = [], []
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while(len(outputs) < self.num) and retry < self.max_retry:
-                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                tokens = 0
-                start=time.time()
-                prompt = get_prompt(
-                    template_name="oracle_data_generation", 
-                    schema_string=self.schema_string,
-                    columns_values_string=__values_to_string(self.matched_conditions) if self.matched_conditions else None,
-                    history_string=__history_to_string(history) if history else None
-                )
-                response, metadata = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
-                tokens += metadata.get("token_used", 0)
-                end=time.time()
-                logging.info(f"oracle_data_generation took {end - start:.2f} seconds.")
-                try:
-                    self._validate_test_fixture(response, history)
-                except ValidationError as e: 
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    retry += 1
-                    continue
-                prompt2 = get_prompt(
-                    template_name="oracle_data_verification", 
-                    schema_string=self.schema_string
-                )
-                start=time.time()
-                response2, metadata2 = self.backbone(prompt2, parser2, request_kwargs={
+        state_lock = threading.Lock()
+        max_workers = max(1, min(getattr(self, "parallel_workers", 1), self.num))
+
+        def _generate_candidate(history_string):
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            tokens, logprob = 0, 0
+            trace = "->>Parallel Test Case Tracelog<<-\n"
+            prompt = get_prompt(
+                template_name="simulate_db_generation",
+                schema_string=self.schema_string,
+                columns_values_string=__values_to_string(self.matched_conditions) if self.matched_conditions else None,
+                history_string=history_string
+            )
+            # start = time.time()
+            response, metadata = self.backbone(
+                prompt,
+                self.parser,
+                request_kwargs={"QUESTION": self.nl, "HINT": self.hint}
+            )
+            metadata = metadata or {}
+            tokens += metadata.get("token_used", 0)
+            logprob += metadata.get("logprob", None)
+            trace += f"[simulated DB]: {response.get('database_instances', '')}"
+            # logging.info(f"simulate_db_generation took {time.time() - start:.2f} seconds.")
+
+            prompt2 = get_prompt(template_name="oracle_data_generation", schema_string=self.schema_string)
+            response2, metadata2 = self.backbone(
+                prompt2,
+                self.parser2,
+                request_kwargs={
                     "QUESTION": self.nl,
                     "HINT": self.hint,
-                    "DATABASE_INSTANCES": json.dumps(response["database_instances"], indent=4)
-                    }
-                )
-                tokens += metadata2.get("token_used", 0)
-                end=time.time()
-                logging.info(f"oracle_data_verification took {end - start:.2f} seconds.")
-                try:
-                    self._validate_test_fixture(response2, history, key="resulting_data", instances=response["database_instances"])
-                except ValidationError as e:
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    retry += 1
-                    continue
-                # token usuage and logprobs
-                ret.logprob = metadata2.get("logprob", None)
-                ret.token_used = tokens
-                ret.trace = trace
-                ret.test_fixtures.data = response["database_instances"]
-                ret.test_fixtures.label_result = response2["resulting_data"]
-                # logging.info(f"Generated test fixture: \nChain-of-the-Thought: {response2['explanation']}\nDatabase Instances: {json.dumps(ret.test_fixtures.data, indent=4)}\nExpected Result: {json.dumps(ret.test_fixtures.label_result, indent=4)}")
-                history.append(ret.test_fixtures)
-                outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                    "DATABASE_INSTANCES": json.dumps(response.get("database_instances", {}), indent=4)
+                }
+            )
+            metadata2 = metadata2 or {}
+            tokens += metadata2.get("token_used", 0)
+            logprob += metadata2.get("logprob", None)
+            ret.logprob = logprob*0.5
+            ret.token_used = tokens
+            trace += f"[oracle data]: {response2.get('resulting_data', '')}"
+            ret.trace = trace
+            ret.test_fixtures.data = response.get("database_instances", {})
+            ret.test_fixtures.label_result = response2.get("resulting_data", {})
+            
+            return response, response2, ret
+
+        def submit_task(executor, futures):
+            with state_lock:
+                if len(outputs) >= self.num or retry >= self.max_retry:
+                    return False
+                history_string = __history_to_string(history) if history else None
+            future = executor.submit(_generate_candidate, history_string)
+            futures.add(future)
+            return True
+
+        with spinner and ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = set()
+            for _ in range(max_workers):
+                if not submit_task(executor, futures):
+                    break
+
+            stop_generation = False
+            while futures and not stop_generation:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    futures.remove(fut)
+                    try:
+                        response, response2, ret = fut.result()
+                    except Exception as exc:
+                        logging.exception("Oracle result generation worker failed", exc_info=exc)
+                        with state_lock:
+                            retry += 1
+                            if verbose:
+                                spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                        continue
+
+                    appended_to_history = False
+                    try:
+                        with state_lock:
+                            self._validate_test_fixture(response, history)
+                            self._validate_test_fixture(
+                                response2,
+                                history,
+                                key="resulting_data",
+                                instances=response.get("database_instances")
+                            )
+                            history.append(ret.test_fixtures)
+                            appended_to_history = True
+                            outputs.append(self._form_instance(len(outputs), ret))
+                            spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            if stop_generation:
+                                break
+                    except ValidationError as e:
+                        with state_lock:
+                            if appended_to_history and history:
+                                history.pop()
+                            retry += 1
+                            if verbose:
+                                spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                        logging.warning(f"Test fixture validation failed: {e}")
+                    except Exception as err:
+                        with state_lock:
+                            if appended_to_history and history:
+                                history.pop()
+                            retry += 1
+                            if verbose:
+                                spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                        logging.exception("Failed to materialize oracle test instance", exc_info=err)
+
+                    if stop_generation:
+                        break
+
+                    submit_task(executor, futures)
+
+            for fut in futures:
+                fut.cancel()
+
         return outputs
 
-class NLRelaxTestClass(TestClass):
-    def __init__(self):
-        super().__init__("Natural Language Relaxing Test Class", "nl_relax", "metamorphic")
-        
-    def set(self, red_schema, **kwargs):
-        super().set(**kwargs)
-        self.num=3
-        self.schema = red_schema
-        self.test_cases = self._generator()
-
-    def _compare_query_results(self, orgin, mutant):
-        if orgin is None or mutant is None: return False
-        return len(orgin) <= len(mutant)
-    
-    def _test_fn(self, ret: Munch):
-        ret.results = Munch()
-        # ret.description = "Test the original SQL over a faked database with expected execution results"
-        ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
-        ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
-        if len(ret.results.pred) < 10: logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
-        ret.results.standard = "len(pred) >= len(target)"
-        passed = self._compare_query_results(ret.results.target, ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
-    
-    def _validate_test_fixture(self, response, history):
-        def __response_history_compatible_check(response, history):
-            if any(h.nl_mutant == response["nl_mutant"] or h.sql_mutant == response["sql_mutant"] for h in history):
-                raise ValidationError(f"Duplicate response (nl/sql mutant) detected.")
-            return True
-        def __sql_executable_check(response, db_path):
-            if not isinstance(response, dict) or "sql_mutant" not in response:
-                raise ValidationError(
-                        f"SQL executable check failed. "
-                        f"Required key missing 'sql_mutant'"
-                    )
-            res = validate_sql_query(db_path, response["sql_mutant"])
-            if res["STATUS"] != "OK":
-                raise ValidationError(
-                        f"SQL executable check failed. "
-                        f"Fail log from DBMS: {res['RESULT']}"
-                    )
-            return True
-        # mutanted SQL syntax check
-        __sql_executable_check(response, self.db_path)
-        # response duplication check
-        __response_history_compatible_check(response, history)
-       
-    def _form_instance(self, idx, ret):
-        """
-        Form each single test case, and save related test fixture for serialization. 
-        Format as: <`MT-type`, `description`, `db-file`, `original-nl`, `original-sql`, `nl-mutant`, `sql-mutant`>
-        
-        Parameters
-        ----------
-        ret: Dict with `type`, `desc`, `nl-mutant`, `sql-mutant` keys
-        No return value
-        """
-        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-            type=ret.type,
-            desc=ret.desc,
-            database=self.db_path, 
-            nl=self.nl,
-            sql=self.sql, 
-            nl_mutant=ret.test_fixtures.nl_mutant,
-            sql_mutant=ret.test_fixtures.sql_mutant)
-        
-        return ret
-    
-    def _generator(self, verbose=True):
-        def __history_to_string(history):
-            return "\n".join(
-                f"--- Example {i+1} ---\n"
-                f"nl mutation: {h.nl_mutant}\n\n"
-                f"sql mutation: {h.sql_mutant}\n\n"
-                for i, h in enumerate(history)
-            )   
-        def __error_to_string(invalids):
-            return "\n".join(
-                f"invalid sql mutation {idx+1}:\n{invalid[0]}\nerror:{invalid[1]}"
-                for idx, invalid in enumerate(invalids)
-            )
-        
-        if self.use_cache: return self._load_cached_test_cases()
-
-        parser = get_parser(parser_name="nl_relaxing_generation")
-        history, outputs = [], []
-        # check query clauses and skip the test if constraint-relatd clauses (WHERE/ORDER/GROUP/IUE) are missing
-        clauses = []
-        try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
-            clauses = list(parsed_query.clauses.keys())
-        except Exception as e:
-            print(e)
-        if not clauses or all(c not in clauses for c in [
-            "WHERE", "LIMIT", "HAVING", "INTERSECT", "INTERSECT ALL", "UNION", "UNION ALL", "EXCEPT", "EXCEPT ALL"]
-        ): return outputs
-        
-        invalids = set()
-        retry = 0
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while len(outputs) < self.num and retry < self.max_retry:
-                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                tokens = 0
-                prompt = get_prompt(
-                    template_name="nl_relaxing_generation", 
-                    invalid_queries_string=__error_to_string(invalids) if invalids else None,
-                    history_string=__history_to_string(history) if history else None
-                )
-                response, metadata = self.backbone(prompt, parser, 
-                    request_kwargs={
-                        "HINT": self.hint,
-                        "QUESTION": self.nl,
-                        "QUERY": self.sql
-                    }
-                )
-                tokens += metadata.get("token_used", 0)
-                # no constraint found, skip directly
-                if isinstance(response, dict) and 'type' in response.keys() and response['type'] == 'unknown': break
-                try:
-                    self._validate_test_fixture(response, history)
-                except ValidationError as e:
-                    retry += 1
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    if "sql_mutant" in response.keys(): invalids.add((response["sql_mutant"], str(e)))
-                    continue
-                trace += f"[nl_mutant] {response['nl_mutant']}\n"
-                trace += f"[sql_mutant] {response['sql_mutant']}\n"
-                trace += f"[description] {response['description']}\n"
-
-                ret.token_used = tokens
-                ret.trace = trace
-                ret.logprob = metadata.get("logprob", None)
-                ret.type = response["type"]
-                ret.desc = response["description"]
-                ret.test_fixtures.nl_mutant = response["nl_mutant"]
-                ret.test_fixtures.sql_mutant = response["sql_mutant"] 
-                history.append(ret.test_fixtures)
-                outputs.append(self._form_instance(len(outputs), ret))
-                logging.info(f"Generated test fixtures:\n{json.dumps(response, indent=4)}")
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
-        return outputs
-
-class NLStrengthenTestClass(TestClass):
-    def __init__(self):
-        super().__init__("Natural Language Strengthening Test Class", "nl_strengthen", "metamorphic")
-
-    def set(self, **kwargs):
-        super().set(**kwargs)
-        self.num=3
-        self.test_cases = self._generator()
-
-    def _compare_query_results(self, orgin, mutant):
-        if orgin is None or mutant is None: return False
-        return len(orgin) >= len(mutant)
-    
-    def _test_fn(self, ret: Munch):
-        ret.results = Munch()
-        ret.results.pred = execute_sql(self.db_path, ret.test_fixtures.sql_mutant)
-        res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
-        ret.results.target = res["RESULT"] if res["STATUS"] == "OK" else None
-        if ret.results.target and len(ret.results.target) < 10: logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
-        ret.results.standard = "len(pred) <= len(target)"
-        passed = self._compare_query_results(ret.results.target, ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
-    
-    def _validate_test_fixture(self, response, history):
-        def __response_history_compatible_check(response, history):
-            if any(h.nl_mutant == response["nl_mutant"] or h.sql_mutant == response["sql_mutant"] for h in history):
-                raise ValidationError(f"Duplicate response (nl/sql mutant) detected.")
-            return True
-        def __sql_executable_check(response, db_path):
-            if not isinstance(response, dict) or "sql_mutant" not in response:
-                raise ValidationError(
-                        f"SQL executable check failed. "
-                        f"Required key missing 'sql_mutant'"
-                    )
-            res = validate_sql_query(db_path, response["sql_mutant"])
-            if res["STATUS"] != "OK":
-                raise ValidationError(
-                        f"SQL executable check failed. "
-                        f"Fail log from DBMS: {res['RESULT']}"
-                    )
-            return True
-        
-        # mutanted SQL syntax check
-        __sql_executable_check(response, self.db_path)
-        # response duplication check
-        __response_history_compatible_check(response, history)
-        
-    def _form_instance(self, idx, ret):
-        """
-        Form each single test case, and save related test fixture for serialization. 
-        Format as: <`MT-type`, `description`, `db-file`, `original-nl`, `original-sql`, `nl-mutant`, `sql-mutant`>
-        
-        Parameters
-        ----------
-        ret: Dict with `type`, `desc`, `nl-mutant`, `sql-mutant` keys
-        No return value
-        """
-        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-            type=ret.type,
-            desc=ret.desc,
-            database=self.db_path, 
-            nl=self.nl,
-            sql=self.sql, 
-            nl_mutant=ret.test_fixtures.nl_mutant,
-            sql_mutant=ret.test_fixtures.sql_mutant)
-        
-        return ret
-    
-    def _generator(self, verbose=True):
-        def __history_to_string(history):
-            return "\n".join(
-                f"--- Example {i+1} ---\n"
-                f"nl mutation: {h.nl_mutant}\n\n"
-                f"sql mutation: {h.sql_mutant}\n\n"
-                for i, h in enumerate(history)
-            )
-        def __error_to_string(invalids):
-            return "\n".join(
-                f"sql mutation: {sql}\n\n"
-                for sql in invalids
-            )
-        
-        if self.use_cache: return self._load_cached_test_cases()
-
-        parser = get_parser(parser_name="nl_strengthening_generation")
-        history, outputs = [], []
-        tokens, retry = 0, 0
-        invalids = set()
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while len(outputs) < self.num and retry < self.max_retry:
-                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                prompt = get_prompt(
-                    template_name="nl_strengthening_generation", 
-                    invalid_queries_string=__error_to_string(invalids) if invalids else None,
-                    history_string=__history_to_string(history) if history else None
-                )
-                response, metadata = self.backbone(prompt, parser, 
-                    request_kwargs={
-                        "HINT": self.hint,
-                        "QUESTION": self.nl,
-                        "QUERY": self.sql
-                    }
-                )
-                tokens += metadata.get("token_used", 0)
-                # no constraint found, skip directly
-                if isinstance(response, dict) and 'type' in response.keys() and response['type'] == 'unknown': break
-                try:
-                    self._validate_test_fixture(response, history)
-                except ValidationError as e:
-                    retry += 1
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    if isinstance(response, dict) and "sql_mutant" in response.keys(): invalids.add(response["sql_mutant"])
-                    continue
-                trace += f"[nl_mutant] {response['nl_mutant']}\n"
-                trace += f"[sql_mutant] {response['sql_mutant']}\n"
-                trace += f"[description] {response['description']}\n"
-
-                # token usuage and logprobs
-                ret.token_used = tokens
-                ret.trace = trace
-                ret.logprob = metadata.get("logprob", None)
-                ret.type = response["type"]
-                ret.desc = response["description"]
-                ret.test_fixtures.nl_mutant = response["nl_mutant"]
-                ret.test_fixtures.sql_mutant = response["sql_mutant"]
-                logging.info(f"Generated test fixtures:\n{json.dumps(response, indent=4)}")
-                history.append(ret.test_fixtures)
-                outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
-        return outputs
-
-class NoiseRowTestClass(TestClass):
+class NoiseRowTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Noise Row Injection Test Class", "metamorphic_noise", "metamorphic")
 
-    def set(self, **kwargs):
+    def set(self, red_schema, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
+        self.red_schema = red_schema
+        self.criteria=0.6
         self.num=3
+        self.max_retry=3
+        self.parallel_workers = 3
+        self.parser = get_parser(parser_name="noise_data_injection")
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
+        matched_conditions, matched_keys = {}, {}
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
+            matched_conditions = parsed_query.check_conditions()
+            matched_keys = parsed_query.check_keys()
+        except Exception as e:
+            print(e)
+        self.schema, self.schema_pruned = self._prune_schema_if_needed(
+            schema=self.schema,
+            pruning_threshold=pruning_threshold,
+            matched_conditions=matched_conditions,
+            matched_keys=matched_keys
+        )
+        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+        self.schema_string = DatabaseManager().get_database_schema_string(
+            tentative_schema=self.schema,
+            schema_with_examples=None, # type: ignore
+            schema_with_descriptions=schema_with_descriptions,
+            include_value_description=True
+        )
+        self._schedule_pruned_db_materialization(self.schema_string, copy_existing_rows=True)
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
@@ -942,7 +840,7 @@ class NoiseRowTestClass(TestClass):
         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
     
     def _validate_test_fixture(self, response, history):
-        def __output_format_check(response, tables):
+        def __output_format_check(response):
             if not isinstance(response, dict):
                 raise ValidationError(
                     f"Output format(type) check failed. "
@@ -988,12 +886,29 @@ class NoiseRowTestClass(TestClass):
             data = response["injected_rows"]
             for t, row in data.items():
                 if not row: continue
-                if len(column_types[t]) != len(row):
-                    raise ValidationError(
-                        f"Schema-data column count mismatch. "
-                        f"Column count of table `{t}` in data row: {len(row)}(e.g., {row}), "
-                        f"Expected column count: {len(column_types[t])}({','.join(schema[t])})"
-                    )
+                # hard-code to convert ``incorrect'' nested list into list for parsing
+                if isinstance(row[0], list): 
+                    row = row[0]
+                    data[t] = row
+                expected_len = len(column_types[t])
+                if expected_len != len(row):
+                    fixed_row = None
+                    # len_delta = abs(expected_len - len(row))
+                    # if len_delta <= 1:
+                    #     fixed_row = self._attempt_row_alignment_fix(
+                    #         table_name=t,
+                    #         row=row,
+                    #         column_names=schema.get(t, []),
+                    #         column_types=column_types[t]
+                    #     )
+                    if fixed_row is None:
+                        raise ValidationError(
+                            f"Schema-data column count mismatch. "
+                            f"Column count of table `{t}` in data row: {len(row)} (e.g., {row}), "
+                            f"Expected column count: {expected_len}({','.join(schema[t])})"
+                        )
+                    # row = fixed_row
+                    # data[t] = row
                 
                 for v, tp in zip(row, column_types[t]):
                     # print(tp)
@@ -1009,6 +924,29 @@ class NoiseRowTestClass(TestClass):
                             f"Expected column type: {expected_type}"
                         )
             return True
+        def __extract_column_types_from_schema_string(schema_string):
+            constraints = ('primary key', 'foreign key', 'unique', 'check', 'constraint')
+
+            res = {}
+            ddl_regex = re.compile(r"CREATE TABLE.*?\);", re.DOTALL | re.IGNORECASE)
+            ddl_commands = ddl_regex.findall(schema_string)
+            for ddl_command in ddl_commands:
+                create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+                table_name = create_table_match.group(1).strip()
+                column_definitions = create_table_match.group(2).strip()
+                definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
+                type_regex = re.compile(r'.*\b(TEXT|INTEGER|REAL|NUMERIC|BLOB|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
+                types = []
+                for column_def in definitions:
+                    column_def = column_def.strip()
+                    # if 'foreign key' in column_def.lower(): continue
+                    # 跳过表级约束
+                    if column_def.lower().startswith(constraints): continue
+                    match = type_regex.search(column_def)
+                    if match:
+                        types.append(match.group(1).upper())
+                res[table_name] = types
+            return res
         def __response_history_compatible_check(response, history):
             def __dicts_equal___(d1, d2):
                 if d1.keys() != d2.keys():
@@ -1017,15 +955,7 @@ class NoiseRowTestClass(TestClass):
                 for key in d1:
                     v1, v2 = d1[key], d2[key]
                     # If both are lists, check order-insensitive equality
-                    if isinstance(v1, list) and isinstance(v2, list):
-                        # Convert inner lists to tuples (hashable) for set comparison
-                        set1 = set(tuple(item) for item in v1)
-                        set2 = set(tuple(item) for item in v2)
-                        if set1 != set2:
-                            return False
-                    else:
-                        if v1 != v2:
-                            return False
+                    if isinstance(v1, list) and isinstance(v2, list) and set(v1) != set(v2): return False
                 return True
             
             for h in history:
@@ -1034,15 +964,61 @@ class NoiseRowTestClass(TestClass):
             return True
         
         # output format check
-        table_names = DatabaseManager().get_db_all_tables()
-        __output_format_check(response, table_names)
-        # __resulting_schema_check(response, self.schema if self.schema_pruned else DatabaseManager().get_db_schema())
+        __output_format_check(response)
         # schema-data alignment check
-        if isinstance(response, dict):
-            column_types= DatabaseManager().get_all_column_types()
-            __schema_data_alignment_check(response, table_names, column_types, self.schema)
-            # response duplication check
-            __response_history_compatible_check(response, history)
+        table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
+        column_types= DatabaseManager().get_all_column_types() \
+            if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
+        __schema_data_alignment_check(response, table_names, column_types, self.schema)
+        # response duplication check
+        __response_history_compatible_check(response, history)
+
+    def _attempt_row_alignment_fix(self, table_name, row, column_names, column_types):
+        """
+        Attempt to repair a minor column count mismatch by asking the backbone LLM
+        to produce an aligned row that matches the table schema.
+        """
+        if not getattr(self, "repair_parser", None):
+            return None
+        if not column_names or not column_types:
+            return None
+        column_spec_payload = []
+        for idx, name in enumerate(column_names):
+            column_spec_payload.append({
+                "name": name,
+                "type": column_types[idx] if idx < len(column_types) else "TEXT"
+            })
+        issue_description = (
+            f"Table `{table_name}` expects {len(column_names)} columns but received {len(row)}."
+        )
+        prompt = get_prompt(template_name="noise_data_alignment_fix")
+        response, _ = self.backbone(
+            prompt,
+            self.repair_parser,
+            request_kwargs={
+                "HINT": self.hint,
+                "QUESTION": self.nl,
+                "TABLE_NAME": table_name,
+                "COLUMN_SPEC": json.dumps(column_spec_payload, ensure_ascii=False, indent=2),
+                "ROW_VALUES": json.dumps(list(row), ensure_ascii=False),
+                "ISSUE_DESCRIPTION": issue_description
+            }
+        )
+        fixed_rows = response.get("fixed_rows") if isinstance(response, dict) else None
+        if not isinstance(fixed_rows, dict): return None
+        candidate = fixed_rows.get(table_name)
+        if candidate is None and fixed_rows:
+            candidate = next(iter(fixed_rows.values()))
+        if candidate is None:
+            return None
+        if len(candidate) != len(column_names):
+            logging.warning(
+                f"Row auto-fix produced {len(candidate)} values for `{table_name}`, "
+                f"but {len(column_names)} are required."
+            )
+            return None
+        logging.info(f"Auto-fixed row for table `{table_name}`: {row} -> {candidate}")
+        return candidate
         
     def _form_instance(self, idx, ret):
         """
@@ -1060,7 +1036,16 @@ class NoiseRowTestClass(TestClass):
         # Create test data test_cases
         ret.test_fixtures.db = os.path.join(TEST_INSTANCE_ROOT_PATH, f"{self.db_id}.sqlite")
         logging.info(f"Creating test database at \"{ret.test_fixtures.db}\" ...")
-        duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db, reset=False)
+        if not self.schema_pruned:
+            duplicate_sqlite_database(src_db_path=self.db_path, dest_db_path=ret.test_fixtures.db, reset=False)
+        else:
+            snapshot_path = self._ensure_pruned_db_snapshot_ready()
+            if snapshot_path and os.path.exists(snapshot_path):
+                shutil.copy2(snapshot_path, ret.test_fixtures.db)
+            else:
+                logging.warning("Pruned schema snapshot unavailable; rebuilding synchronously for NoiseRowTestClass.")
+                create_sqlite_database(ret.test_fixtures.db, self.schema_string)
+                self._copy_rows_into_pruned_db(ret.test_fixtures.db, self.schema)
         for t, row in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
         
         return ret
@@ -1069,61 +1054,104 @@ class NoiseRowTestClass(TestClass):
         def __history_to_string(history):
             return "\n".join(
                 f"--- Example {i+1} ---\n"
-                f"database_instances: {json.dumps(h['data'], indent=4)}\n\n"
-                # f"resulting_data: {json.dumps(h['label_result'], indent=4)}"
+                f"injected rows: {json.dumps(h['data'], indent=4)}\n\n"
                 for i, h in enumerate(history)
             )
 
-        # parser = get_parser(parser_name="noise_data_table_determination")
-        parser = get_parser(parser_name="noise_data_injection")
-        history, outputs = [], []
         retry = 0
+        history, outputs = [], []
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while(len(outputs) < self.num) and retry < self.max_retry:
-                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                tokens = 0
-                start=time.time()
-                # prompt = get_prompt(
-                #     template_name="noise_data_table_determination", 
-                #     schema_string=self.schema_string
-                # )
-                # response, metadata = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
-                # tokens += metadata.get("token_used", 0)
-                # try:
-                #     self._validate_test_fixture(response['table'], history)
-                # except ValidationError as e: 
-                #     logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                #     if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                #     retry += 1
-                #     continue
-                
-                prompt = get_prompt(
-                    template_name="noise_data_injection", 
-                    schema_string=self.schema_string,
-                    history_string=__history_to_string(history) if history else None
-                )
-                response, metadata = self.backbone(prompt, parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
-                tokens += metadata.get("token_used", 0)
-                try:
-                    self._validate_test_fixture(response, history)
-                except ValidationError as e: 
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    retry += 1
-                    continue
-                end=time.time()
-                logging.info(f"noise_data_injection took {end - start:.2f} seconds.")
-                # token usuage and logprobs
-                ret.logprob = metadata.get("logprob", None)
-                ret.token_used = tokens
-                ret.trace = trace
-                ret.test_fixtures.data = response["injected_rows"]
-                history.append(ret.test_fixtures)
-                outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
+        state_lock = threading.Lock()
+        max_workers = max(1, min(self.parallel_workers, self.num))
+
+        def _generate_candidate(history_string):
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            trace = f"->>Parallel Test Case Tracelog<<-\n"
+
+            prompt = get_prompt(
+                template_name="noise_data_injection",
+                schema_string=self.schema_string,
+                history_string=history_string
+            )
+            response, metadata = self.backbone(prompt, self.parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
+            metadata = metadata or {}
+            trace += f"[injected rows]: {response.get('injected_rows', '')}"
+            ret.token_used = metadata.get("token_used", 0)
+            ret.logprob = metadata.get("logprob", None)
+            ret.trace = trace
+            ret.test_fixtures.data = response.get("injected_rows", {})
+            return response, ret
+
+        def submit_task(executor, futures):
+            with state_lock:
+                if len(outputs) >= self.num or retry >= self.max_retry: return False
+                history_string = __history_to_string(history) if history else None
+            future = executor.submit(_generate_candidate, history_string)
+            futures.add(future)
+            return True
+
+        with spinner and ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = set()
+            for _ in range(max_workers):
+                if not submit_task(executor, futures):
+                    break
+
+            stop_generation = False
+            while futures and not stop_generation:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    futures.remove(fut)
+                    try:
+                        response, ret = fut.result()
+                    except Exception as exc:
+                        logging.exception("Noise data generation worker failed", exc_info=exc)
+                        with state_lock:
+                            retry += 1
+                            if verbose:
+                                spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
+                        continue
+
+                    appended_to_history = False
+                    try:
+                        with state_lock:
+                            self._validate_test_fixture(response, history)
+                            if ret.test_fixtures.data is None:
+                                raise ValidationError("Missing `injected_rows` in response.")
+                            history.append(ret.test_fixtures)
+                            appended_to_history = True
+                            outputs.append(self._form_instance(len(outputs), ret))
+                            spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            if stop_generation: break
+                    except ValidationError as e:
+                        with state_lock:
+                            if appended_to_history and history:
+                                history.pop()
+                            retry += 1
+                            if verbose:
+                                spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                        logging.warning(f"Test fixture validation failed: {e}")
+                    except Exception as err:
+                        with state_lock:
+                            if appended_to_history and history:
+                                history.pop()
+                            retry += 1
+                            if verbose:
+                                spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                        logging.exception("Failed to materialize test instance", exc_info=err)
+
+                    with state_lock:
+                        stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+
+                    if stop_generation:
+                        break
+
+                    submit_task(executor, futures)
+
+            for fut in futures:
+                fut.cancel()
+
         return outputs
     
 class CrossModelTestClass(TestClass):
@@ -1162,7 +1190,6 @@ class CrossModelTestClass(TestClass):
     
     def _compare_query_results(self, pred_list, origin):
         vote = 0
-        majority = pred_list[0]
         for pred in pred_list:
             if set(pred) == set(origin): vote+=1
         return vote >= len(pred_list) / 2
@@ -1437,133 +1464,6 @@ class SelfConsistencyTestClass(TestClass):
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
-# class QueryReviewTestClass(TestClass):
-#     def __init__(self):
-#         super().__init__("Step-through Query Review Test Class", "query_review", "explore")
-
-#     def set(self, red_schema, **kwargs):
-#         super().set(**kwargs)
-#         self.schema = red_schema
-#         self.backbone = ModelFactory.create(
-#             model_platform=ModelPlatformType.AZURE,
-#             model_type=ModelType.GPT_4O_MINI if self.backbone.model_name == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
-#             model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
-#         )
-#         self.test_cases = self._generator()
-
-#     def _compare_query_results(self, preds, targets):
-#         for pred, target in zip(preds, targets):
-#             if pred != target: return False
-#         return True
-    
-#     def _test_fn(self, ret: Munch):
-#         ret.results = Munch()
-#         ret.results.pred = [turn['status'] for turn in ret.test_fixtures.turns]
-#         ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
-#         ret.results.standard = "pred == target"
-#         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-#         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
-        
-#     def _form_instance(self, idx, ret):
-#         """
-#         Form each single test case, and save related test fixture for serialization. 
-        
-#         Parameters
-#         ----------
-#         ret: Dict with `turns` key
-#         No return value
-#         """
-#         TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-#         os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-#         # test case serialization
-#         self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, turns=ret.test_fixtures.turns)
-        
-#         return ret
-    
-#     def _generator(self):
-#         if self.use_cache: return self._load_cached_test_cases()
-
-#         # Obtain query clauses for next debugging purpose
-#         clauses = []
-#         try:
-#             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
-#             clauses = list(parsed_query.clauses.keys())
-#         except Exception as e:
-#             print(e)
-        
-#         outputs = []
-#         ret = Munch()
-#         ret.test_fixtures = Munch()
-#         prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
-#         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-#         with spinner:
-#             while len(outputs) < self.num:
-#                 trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-#                 random.shuffle(clauses)
-#                 task_prompt = prompt.invoke({
-#                     "QUESTION": self.nl,
-#                     "HINT": self.hint,
-#                     "SQL": self.sql,
-#                     "CLAUSES": "- " + ", ".join(clauses) if clauses else "",
-#                     "RANDOMNESS1": str(random.randint(3, 6)),
-#                     "RANDOMNESS2": str(random.randint(15, 40))
-#                     }
-#                 ).messages[0].content
-#                 role_play_session = RolePlaying(
-#                     assistant_role_name="SQL Developer",
-#                     assistant_agent_kwargs=dict(model=self.backbone),
-#                     user_role_name="Rubber Duck Debugging Assistant",
-#                     user_agent_kwargs=dict(model=self.backbone),
-#                     task_prompt=task_prompt,
-#                     with_task_specify=False
-#                 )
-#                 # # Print initial system messages
-#                 # print(Fore.GREEN + f"AI Assistant sys message:\\n{role_play_session.assistant_sys_msg}\\n" + Style.RESET_ALL)
-#                 # print(Fore.BLUE + f"AI User sys message:\\n{role_play_session.user_sys_msg}\\n" + Style.RESET_ALL)
-#                 # print(Fore.YELLOW + f"Original task prompt:\\n{task_prompt}\\n" + Style.RESET_ALL)
-#                 # print(
-#                 #     Fore.CYAN
-#                 #     + "Specified task prompt:"
-#                 #     + f"\\n{role_play_session.specified_task_prompt}\\n"
-#                 #     + Style.RESET_ALL
-#                 # )
-#                 # print(Fore.RED + f"Final task prompt:\\n{role_play_session.task_prompt}\\n" + Style.RESET_ALL)
-#                 n = 0
-#                 chat_turn_limit = 10
-#                 input_msg = role_play_session.init_chat()
-#                 turns = []
-#                 tokens = 0
-#                 # Turn-based simulation
-#                 while n < chat_turn_limit:
-#                     n += 1
-#                     # trace += f"[input_msg]:{input_msg.content}\n"
-#                     assistant_response, user_response = role_play_session.step(input_msg)
-#                     trace += f"[user_response]:{user_response.msg.content}\n"
-#                     trace += f"[assistant_response]:{assistant_response.msg.content}\n"
-#                     tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
-                    
-#                     # Disable printing animation as it really slows down the test
-#                     # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-#                     # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-                    
-#                     parsed_response = {
-#                         "user_msg": user_response.msg.content,
-#                         **json.loads(assistant_response.msg.content.strip())
-#                     }
-#                     turns.append(parsed_response)
-#                     if parsed_response["status"] == "Error Detected" or "CAMEL_TASK_DONE" in user_response.msg.content: break
-
-#                     input_msg = assistant_response.msg
-
-#                 ret.token_used = tokens
-#                 ret.logprob = None
-#                 ret.test_fixtures.turns = turns
-#                 ret.trace = trace
-#                 outputs.append(self._form_instance(len(outputs), ret))
-
-#         return outputs
-
 class QueryReviewTestClass(TestClass):
     def __init__(self):
         super().__init__("Step-through Query Review Test Class", "query_review", "explore")
@@ -1644,110 +1544,6 @@ class QueryReviewTestClass(TestClass):
 
         return outputs
 
-# class NLReviewTestClass(TestClass):
-#     def __init__(self):
-#         super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore")
-
-#     def set(self, **kwargs):
-#         super().set(**kwargs)
-#         self.backbone = ModelFactory.create(
-#             model_platform=ModelPlatformType.AZURE,
-#             model_type=ModelType.GPT_4O_MINI if self.backbone == "gpt-4o-mini-0708" else ModelType.GPT_5_1,
-#             model_config_dict=ChatGPTConfig(temperature=0).as_dict() # [Optional] the config for model
-#         )
-#         self.test_cases = self._generator()
-
-#     def _compare_query_results(self, preds, targets):
-#         for pred, target in zip(preds, targets):
-#             if pred != target: return False
-#         return True
-    
-#     def _test_fn(self, ret: Munch):
-#         ret.results = Munch()
-#         ret.results.pred = [turn['status'] for turn in ret.test_fixtures.turns]
-#         ret.results.target = ['Pass' for _ in ret.test_fixtures.turns]
-#         ret.results.standard = "pred == target"
-#         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-#         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
-        
-#     def _form_instance(self, idx, ret):
-#         """
-#         Form each single test case, and save related test fixture for serialization. 
-        
-#         Parameters
-#         ----------
-#         ret: Dict with `turns` key
-#         No return value
-#         """
-#         TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-#         os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-#         # test case serialization
-#         self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, turns=ret.test_fixtures.turns)
-        
-#         return ret
-    
-#     def _generator(self):
-#         if self.use_cache: return self._load_cached_test_cases()
-
-#         outputs = []
-#         ret = Munch()
-#         ret.test_fixtures = Munch()
-#         prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
-#         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-#         with spinner:
-#             while len(outputs) < self.num:
-#                 trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-#                 task_prompt = prompt.invoke({
-#                     "QUESTION": self.nl,
-#                     "HINT": self.hint,
-#                     "SQL": self.sql,
-#                     "RANDOMNESS1": str(random.randint(2, 5)),
-#                     "RANDOMNESS2": str(random.randint(15, 40))
-#                     }
-#                 ).messages[0].content
-#                 role_play_session = RolePlaying(
-#                     assistant_role_name="SQL Developer",
-#                     assistant_agent_kwargs=dict(model=self.backbone),
-#                     user_role_name="Rubber Duck Debugging Assistant",
-#                     user_agent_kwargs=dict(model=self.backbone),
-#                     task_prompt=task_prompt,
-#                     with_task_specify=False
-#                 )
-#                 n = 0
-#                 chat_turn_limit = 10
-#                 turns = []
-#                 input_msg = role_play_session.init_chat()
-#                 tokens = 0
-#                 # Turn-based simulation
-#                 while n < chat_turn_limit:
-#                     n += 1
-#                     assistant_response, user_response = role_play_session.step(input_msg)
-#                     trace += f"[user_response]:{user_response.msg.content}\n"
-#                     trace += f"[assistant_response]:{assistant_response.msg.content}\n"
-#                     tokens += assistant_response.info.get("usage")["total_tokens"] + user_response.info.get("usage")["total_tokens"]
-
-#                     # print(f"\033[94mAI User:\n\n{user_response.msg.content}\033[0m", flush=True)
-#                     # print(f"\033[92mAI Assistant:\n\n{assistant_response.msg.content}\033[0m", flush=True)
-#                     # print_text_animated(Fore.BLUE + f"AI User:\\n\\n{user_response.msg.content}\\n" + Style.RESET_ALL)
-#                     # print_text_animated(Fore.GREEN + f"AI Assistant:\\n\\n{assistant_response.msg.content}\\n" + Style.RESET_ALL)
-                    
-#                     parsed_response = {
-#                         "user_msg": user_response.msg.content,
-#                         **json.loads(assistant_response.msg.content.strip())
-#                     }
-#                     turns.append(parsed_response)
-#                     if parsed_response["status"] == "Error Detected" or "CAMEL_TASK_DONE" in user_response.msg.content: break
-                    
-#                     input_msg = assistant_response.msg
-                
-#                 ret.token_used = tokens
-#                 ret.logprob = None
-#                 ret.test_fixtures.turns = turns
-#                 ret.trace = trace
-#                 outputs.append(self._form_instance(len(outputs), ret))
-        
-#         return outputs
 class NLReviewTestClass(TestClass):
     def __init__(self):
         super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore")
