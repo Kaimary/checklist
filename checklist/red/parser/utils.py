@@ -59,12 +59,12 @@ def sql_tokens_to_sql(tokens):
                     tab = f"`{tab}`"
                 if " " in col or "-" in col:
                     col = f"`{col}`"
-                sql += f"{tab}.{col}"
+                sql += f" {tab}.{col}"
             else:
                 if " " in token.value or "-" in token.value:
-                    sql += f"`{token.value}`"
+                    sql += f" `{token.value}`"
                 else:
-                    sql += f"{token.value}"
+                    sql += f" {token.value}"
         else:
             sql += f"{token.stringified_token}"
     sql = sql.strip()
