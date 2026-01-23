@@ -1,14 +1,23 @@
+import copy
 import os
-from pathlib import Path
 import re
 import json
 import hashlib
 import logging
-from dotenv import load_dotenv
+import sqlite3
+import threading
 import numpy as np
+from pathlib import Path
 from munch import Munch
+from dotenv import load_dotenv
 from abc import ABC, abstractmethod
+
 from checklist.llm import LLM
+from checklist.parsers import get_parser
+from checklist.prompts import get_prompt
+from checklist.database_utils.db_opt import create_sqlite_database
+from checklist.database_utils.schema import DatabaseSchema
+from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.database_manager import DatabaseManager
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
 
@@ -46,6 +55,192 @@ class SchemaCache:
                 include_value_description=True
             )
         return cls._cache[db_id]
+
+class SchemaPruningMixin:
+    """Shared helpers for classes that optionally prune large schemas via LLM."""
+
+    def _quote_identifier(self, identifier: str) -> str:
+        escaped = identifier.replace('"', '""')
+        return f'"{escaped}"'
+
+    def _validate_pruned_schema(self, response):
+        def __extract_column_name(column_def):
+            pattern = r'''
+                (["'])(.*?)\1 |  # Double/single quoted strings
+                (`)(.*?)`      |  # Backtick quoted strings  
+                (\w+)             # Plain words
+            '''
+            match = re.search(pattern, column_def, re.VERBOSE)
+            if match:
+                if match.group(1):
+                    return match.group(2)
+                if match.group(3):
+                    return match.group(4)
+                if match.group(5):
+                    return match.group(5)
+            return None
+
+        schema_generator = DatabaseSchemaGenerator(
+            tentative_schema=DatabaseSchema.from_schema_dict(response),
+            db_id=self.db_id,
+            db_path=self.db_path
+        )
+        ddl_commands = schema_generator._extract_create_ddl_commands()
+        for table_name, ddl_command in ddl_commands.items():
+            ddl_command = re.sub(r'\s+', ' ', ddl_command.strip())
+            create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
+            table = create_table_match.group(1).strip()
+            if table != table_name:
+                logging.warning(f"Table name mismatch: {table} != {table_name}")
+            column_definitions = create_table_match.group(2).strip()
+            definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
+            for col in response[table_name]:
+                if all(col not in d for d in definitions):
+                    raise ValidationError(
+                        f"Pruned schema column name checking failed. "
+                        f"Column `{col}` should not in table `{table_name}`❌"
+                    )
+            for column_def in definitions:
+                column_def = column_def.strip()
+                if "primary key" in column_def.lower():
+                    pk_column_name = __extract_column_name(column_def)
+                    if pk_column_name not in response[table_name]:
+                        response[table_name].insert(0, pk_column_name)
+            return True
+
+    def _copy_rows_into_pruned_db(self, target_db_path, schema_subset):
+        dest_conn = sqlite3.connect(target_db_path)
+        src_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        try:
+            dest_cur = dest_conn.cursor()
+            src_cur = src_conn.cursor()
+            for table, columns in schema_subset.items():
+                if not columns:
+                    continue
+                quoted_table = self._quote_identifier(table)
+                quoted_columns = ', '.join(self._quote_identifier(col) for col in columns)
+                select_sql = f"SELECT {quoted_columns} FROM {quoted_table}"
+                try:
+                    src_cur.execute(select_sql)
+                except sqlite3.Error as exc:
+                    logging.warning(
+                        f"Skipping data backfill for table `{table}` during pruned DB build: {exc}"
+                    )
+                    continue
+                placeholders = ', '.join('?' for _ in columns)
+                insert_sql = f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
+                while True:
+                    rows = src_cur.fetchmany(512)
+                    if not rows:
+                        break
+                    try:
+                        dest_cur.executemany(insert_sql, rows)
+                    except sqlite3.Error as exc:
+                        logging.warning(
+                            f"Failed inserting rows into table `{table}` for pruned DB build: {exc}"
+                        )
+                        break
+            dest_conn.commit()
+        finally:
+            src_conn.close()
+            dest_conn.close()
+
+    def _prune_schema_if_needed(
+        self,
+        schema,
+        pruning_threshold,
+        matched_conditions=None,
+        matched_keys=None,
+    ):
+        self.schema_pruned = False
+        self._pruned_db_build_event = None
+        self._pruned_db_build_error = None
+        self._pruned_db_snapshot_path = None
+        if pruning_threshold is None:
+            return schema, False
+        if not any(len(cols) > pruning_threshold for cols in schema.values()):
+            return schema, False
+
+        logging.warning(
+            f"Database {self.db_id} has tables with more than {pruning_threshold} columns. "
+            "Truncating the schema before generation ..."
+        )
+        retry = 0
+        error = set()
+        parser = get_parser(parser_name="schema_pruning")
+        matched_conditions = matched_conditions or {}
+        matched_keys = matched_keys or {}
+
+        while retry < self.max_retry:
+            prompt = get_prompt(
+                template_name="schema_pruning",
+                columns_string=', '.join(matched_conditions.keys()) if matched_conditions else None,
+                keys_string=', '.join([f"{t}.{c}" for t, c in matched_keys.items()]) if matched_keys else None,
+                error_string='\n'.join(error) if error else None
+            )
+            response, _ = self.backbone(
+                prompt,
+                parser,
+                request_kwargs={
+                    "HINT": self.hint,
+                    "QUESTION": self.nl,
+                    "DATABASE_SCHEMA": json.dumps(schema, indent=4)
+                }
+            )
+            try:
+                self._validate_pruned_schema(response)
+                logging.info(f"Pruned schema: {json.dumps(response, indent=4)}")
+                self.schema_pruned = True
+                return response, True
+            except ValidationError as e:
+                error.add(str(e).split('.')[-1])
+                retry += 1
+                logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
+
+        return schema, False
+
+    def _schedule_pruned_db_materialization(self, schema_string, copy_existing_rows=False):
+        if not getattr(self, "schema_pruned", False):
+            return
+        if not schema_string:
+            return
+        if getattr(self, "_pruned_db_build_event", None):
+            return
+        self._pruned_db_snapshot_path = os.path.join(
+            self.instance_saved_path,
+            f"{self.db_id}_pruned_base.sqlite"
+        )
+        schema_subset = copy.deepcopy(self.schema)
+        event = threading.Event()
+        self._pruned_db_build_event = event
+        self._pruned_db_build_error = None
+
+        def _worker():
+            try:
+                os.makedirs(os.path.dirname(self._pruned_db_snapshot_path), exist_ok=True)
+                create_sqlite_database(self._pruned_db_snapshot_path, schema_string)
+                if copy_existing_rows:
+                    self._copy_rows_into_pruned_db(self._pruned_db_snapshot_path, schema_subset)
+            except Exception as exc:
+                self._pruned_db_build_error = exc
+                logging.exception("Failed to build pruned schema database snapshot", exc_info=exc)
+            finally:
+                event.set()
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _ensure_pruned_db_snapshot_ready(self):
+        event = getattr(self, "_pruned_db_build_event", None)
+        if not event:
+            return None
+        event.wait()
+        if getattr(self, "_pruned_db_build_error", None):
+            logging.warning(
+                f"Pruned schema snapshot creation failed: {self._pruned_db_build_error}"
+            )
+            return None
+        return getattr(self, "_pruned_db_snapshot_path", None)
+
 
 class TestClass(ABC):
     def __init__(self, name, abbrev_name, abbrev_type, key="nl+sql", use_cache=False):

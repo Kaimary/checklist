@@ -10,11 +10,11 @@ from judges import GuardianJudge, LLMJudge
 from evaluation.bird_evaluation.evaluation import execute_model
 from checklist.red.parser.schema import Schema
 from checklist.database_utils.db_info import get_db_schema_from_json
-from checklist.test_classes import CrossModelTestClass, MinimumSyntaxTestClass, NLReviewTestClass, NoiseRowTestClass, OracleResultTestClass, QueryReviewTestClass, SelfConsistencyTestClass, SemanticCheckTestClass
+from checklist.test_classes import CrossModelTestClass, NLReviewTestClass, NoiseRowTestClass, \
+    OracleResultTestClass, QueryReviewTestClass, SelfConsistencyTestClass, SemanticCheckTestClass
 
 DEFAULT_BACKBONE_MODEL_NAME = "gpt-4o-mini-0708"
 TEST_CLASS_MAP = {
-    "syn": MinimumSyntaxTestClass,
     "sem": SemanticCheckTestClass,
     "orc": OracleResultTestClass,
     "nos": NoiseRowTestClass,
@@ -23,6 +23,7 @@ TEST_CLASS_MAP = {
     "qry": QueryReviewTestClass,
     "nlr": NLReviewTestClass
 }
+    # "syn": MinimumSyntaxTestClass,
     # "lax": NLRelaxTestClass,
     # "stn": NLStrengthenTestClass,
 _PRED_CACHE = {}

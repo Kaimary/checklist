@@ -1,7 +1,16 @@
-import os, re, time, json, random, copy, logging, threading, shutil, sqlite3
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+import os
+import re
+import time
+import json
+import random
+import copy
+import logging
+import threading
+import shutil
+from collections import deque
 import numpy as np
 from munch import Munch
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from checklist.spinner import Spinner
 from checklist.parsers import get_parser
@@ -9,254 +18,12 @@ from checklist.prompts import get_prompt
 from checklist.red.parser.report import BugLevel
 from checklist.red.parser.red_parser import Query
 from checklist.database_manager import DatabaseManager
-from checklist.base_test_class import TestClass, ValidationError
-from checklist.database_utils.schema import DatabaseSchema
+from checklist.base_test_class import SchemaPruningMixin, TestClass, ValidationError
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_catalog.csv_utils import load_tables_description
-
-class SchemaPruningMixin:
-    """Shared helpers for classes that optionally prune large schemas via LLM."""
-
-    def _quote_identifier(self, identifier: str) -> str:
-        escaped = identifier.replace('"', '""')
-        return f'"{escaped}"'
-
-    def _validate_pruned_schema(self, response):
-        def __extract_column_name(column_def):
-            pattern = r'''
-                (["'])(.*?)\1 |  # Double/single quoted strings
-                (`)(.*?)`      |  # Backtick quoted strings  
-                (\w+)             # Plain words
-            '''
-            match = re.search(pattern, column_def, re.VERBOSE)
-            if match:
-                if match.group(1):
-                    return match.group(2)
-                if match.group(3):
-                    return match.group(4)
-                if match.group(5):
-                    return match.group(5)
-            return None
-
-        schema_generator = DatabaseSchemaGenerator(
-            tentative_schema=DatabaseSchema.from_schema_dict(response),
-            db_id=self.db_id,
-            db_path=self.db_path
-        )
-        ddl_commands = schema_generator._extract_create_ddl_commands()
-        for table_name, ddl_command in ddl_commands.items():
-            ddl_command = re.sub(r'\s+', ' ', ddl_command.strip())
-            create_table_match = re.match(r'CREATE TABLE "?`?([\w -]+)`?"?\s*\((.*)\)', ddl_command, re.DOTALL)
-            table = create_table_match.group(1).strip()
-            if table != table_name:
-                logging.warning(f"Table name mismatch: {table} != {table_name}")
-            column_definitions = create_table_match.group(2).strip()
-            definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
-            for col in response[table_name]:
-                if all(col not in d for d in definitions):
-                    raise ValidationError(
-                        f"Pruned schema column name checking failed. "
-                        f"Column `{col}` should not in table `{table_name}`❌"
-                    )
-            for column_def in definitions:
-                column_def = column_def.strip()
-                if "primary key" in column_def.lower():
-                    pk_column_name = __extract_column_name(column_def)
-                    if pk_column_name not in response[table_name]:
-                        response[table_name].insert(0, pk_column_name)
-            return True
-
-    def _copy_rows_into_pruned_db(self, target_db_path, schema_subset):
-        dest_conn = sqlite3.connect(target_db_path)
-        src_conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        try:
-            dest_cur = dest_conn.cursor()
-            src_cur = src_conn.cursor()
-            for table, columns in schema_subset.items():
-                if not columns:
-                    continue
-                quoted_table = self._quote_identifier(table)
-                quoted_columns = ', '.join(self._quote_identifier(col) for col in columns)
-                select_sql = f"SELECT {quoted_columns} FROM {quoted_table}"
-                try:
-                    src_cur.execute(select_sql)
-                except sqlite3.Error as exc:
-                    logging.warning(
-                        f"Skipping data backfill for table `{table}` during pruned DB build: {exc}"
-                    )
-                    continue
-                placeholders = ', '.join('?' for _ in columns)
-                insert_sql = f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
-                while True:
-                    rows = src_cur.fetchmany(512)
-                    if not rows:
-                        break
-                    try:
-                        dest_cur.executemany(insert_sql, rows)
-                    except sqlite3.Error as exc:
-                        logging.warning(
-                            f"Failed inserting rows into table `{table}` for pruned DB build: {exc}"
-                        )
-                        break
-            dest_conn.commit()
-        finally:
-            src_conn.close()
-            dest_conn.close()
-
-    def _prune_schema_if_needed(
-        self,
-        schema,
-        pruning_threshold,
-        matched_conditions=None,
-        matched_keys=None,
-    ):
-        self.schema_pruned = False
-        self._pruned_db_build_event = None
-        self._pruned_db_build_error = None
-        self._pruned_db_snapshot_path = None
-        if pruning_threshold is None:
-            return schema, False
-        if not any(len(cols) > pruning_threshold for cols in schema.values()):
-            return schema, False
-
-        logging.warning(
-            f"Database {self.db_id} has tables with more than {pruning_threshold} columns. "
-            "Truncating the schema before generation ..."
-        )
-        retry = 0
-        error = set()
-        parser = get_parser(parser_name="schema_pruning")
-        matched_conditions = matched_conditions or {}
-        matched_keys = matched_keys or {}
-
-        while retry < self.max_retry:
-            prompt = get_prompt(
-                template_name="schema_pruning",
-                columns_string=', '.join(matched_conditions.keys()) if matched_conditions else None,
-                keys_string=', '.join([f"{t}.{c}" for t, c in matched_keys.items()]) if matched_keys else None,
-                error_string='\n'.join(error) if error else None
-            )
-            response, _ = self.backbone(
-                prompt,
-                parser,
-                request_kwargs={
-                    "HINT": self.hint,
-                    "QUESTION": self.nl,
-                    "DATABASE_SCHEMA": json.dumps(schema, indent=4)
-                }
-            )
-            try:
-                self._validate_pruned_schema(response)
-                logging.info(f"Pruned schema: {json.dumps(response, indent=4)}")
-                self.schema_pruned = True
-                return response, True
-            except ValidationError as e:
-                error.add(str(e).split('.')[-1])
-                retry += 1
-                logging.warning(f"Pruned schema validation failed: {e}. Retrying...")
-
-        return schema, False
-
-    def _schedule_pruned_db_materialization(self, schema_string, copy_existing_rows=False):
-        if not getattr(self, "schema_pruned", False):
-            return
-        if not schema_string:
-            return
-        if getattr(self, "_pruned_db_build_event", None):
-            return
-        self._pruned_db_snapshot_path = os.path.join(
-            self.instance_saved_path,
-            f"{self.db_id}_pruned_base.sqlite"
-        )
-        schema_subset = copy.deepcopy(self.schema)
-        event = threading.Event()
-        self._pruned_db_build_event = event
-        self._pruned_db_build_error = None
-
-        def _worker():
-            try:
-                os.makedirs(os.path.dirname(self._pruned_db_snapshot_path), exist_ok=True)
-                create_sqlite_database(self._pruned_db_snapshot_path, schema_string)
-                if copy_existing_rows:
-                    self._copy_rows_into_pruned_db(self._pruned_db_snapshot_path, schema_subset)
-            except Exception as exc:
-                self._pruned_db_build_error = exc
-                logging.exception("Failed to build pruned schema database snapshot", exc_info=exc)
-            finally:
-                event.set()
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _ensure_pruned_db_snapshot_ready(self):
-        event = getattr(self, "_pruned_db_build_event", None)
-        if not event:
-            return None
-        event.wait()
-        if getattr(self, "_pruned_db_build_error", None):
-            logging.warning(
-                f"Pruned schema snapshot creation failed: {self._pruned_db_build_error}"
-            )
-            return None
-        return getattr(self, "_pruned_db_snapshot_path", None)
-
-class MinimumSyntaxTestClass(TestClass):
-    def __init__(self):
-        super().__init__("Minimum Syntax Test Class", "minimum_syntax", "syntax", key="sql")
-    
-    def set(self, **kwargs):
-        super().set(**kwargs)
-        self.test_cases = self._generator()
-    
-    def _test_fn(self, ret: Munch):
-        ret.results = Munch()
-        ret.results.status = ret.test_fixtures.status
-        ret.results.standard = "status is OK"
-        passed = ret.results.status == "OK"
-        return passed, ret.test_fixtures, ret.results, None, 0
-    
-    def write_test_fixture_file(self, output_dir, **kwargs):
-        data = {
-            "sql": kwargs.get("sql"),
-            "status": kwargs.get("status")
-        }
-        output_path = os.path.join(output_dir, 'meta.json')
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        
-    def _form_instance(self, idx, ret):
-        """
-        Form each single test case, and save related test fixture for serialization. 
-        Format as: a list of `bugs`
-        
-        Parameters
-        ----------
-        ret: Dict with `data` and `result` keys
-        No return value
-        """
-        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, sql=self.sql, status=ret.test_fixtures.status)
-        
-        return ret
-    
-    def _generator(self):
-        if self.use_cache: return self._load_cached_test_cases()
-        
-        outputs = []
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            res = validate_sql_query(self.db_path, self.sql)
-            ret.test_fixtures.status = res['STATUS']
-            outputs.append(self._form_instance(len(outputs), ret))
-
-        return outputs
 
 class SemanticCheckTestClass(TestClass):
     def __init__(self):
@@ -348,7 +115,8 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         super().set(**kwargs)
         self.num=3
         self.criteria=0.6
-        self.parallel_workers = 3
+        self.max_retry = self.num
+        self.parallel_workers = self.num
         self.parser = get_parser(parser_name="simulate_db_generation")
         self.parser2 = get_parser(parser_name="oracle_data_generation")
         self.red_schema = red_schema
@@ -633,7 +401,6 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
-        max_workers = max(1, min(getattr(self, "parallel_workers", 1), self.num))
 
         def _generate_candidate(history_string):
             ret = Munch()
@@ -689,9 +456,9 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
             futures.add(future)
             return True
 
-        with spinner and ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
             futures = set()
-            for _ in range(max_workers):
+            for _ in range(self.parallel_workers):
                 if not submit_task(executor, futures):
                     break
 
@@ -766,8 +533,8 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
         self.red_schema = red_schema
         self.criteria=0.6
         self.num=3
-        self.max_retry=3
-        self.parallel_workers = 3
+        self.max_retry=self.num
+        self.parallel_workers = self.num
         self.parser = get_parser(parser_name="noise_data_injection")
         self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         matched_conditions, matched_keys = {}, {}
@@ -973,52 +740,52 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
         # response duplication check
         __response_history_compatible_check(response, history)
 
-    def _attempt_row_alignment_fix(self, table_name, row, column_names, column_types):
-        """
-        Attempt to repair a minor column count mismatch by asking the backbone LLM
-        to produce an aligned row that matches the table schema.
-        """
-        if not getattr(self, "repair_parser", None):
-            return None
-        if not column_names or not column_types:
-            return None
-        column_spec_payload = []
-        for idx, name in enumerate(column_names):
-            column_spec_payload.append({
-                "name": name,
-                "type": column_types[idx] if idx < len(column_types) else "TEXT"
-            })
-        issue_description = (
-            f"Table `{table_name}` expects {len(column_names)} columns but received {len(row)}."
-        )
-        prompt = get_prompt(template_name="noise_data_alignment_fix")
-        response, _ = self.backbone(
-            prompt,
-            self.repair_parser,
-            request_kwargs={
-                "HINT": self.hint,
-                "QUESTION": self.nl,
-                "TABLE_NAME": table_name,
-                "COLUMN_SPEC": json.dumps(column_spec_payload, ensure_ascii=False, indent=2),
-                "ROW_VALUES": json.dumps(list(row), ensure_ascii=False),
-                "ISSUE_DESCRIPTION": issue_description
-            }
-        )
-        fixed_rows = response.get("fixed_rows") if isinstance(response, dict) else None
-        if not isinstance(fixed_rows, dict): return None
-        candidate = fixed_rows.get(table_name)
-        if candidate is None and fixed_rows:
-            candidate = next(iter(fixed_rows.values()))
-        if candidate is None:
-            return None
-        if len(candidate) != len(column_names):
-            logging.warning(
-                f"Row auto-fix produced {len(candidate)} values for `{table_name}`, "
-                f"but {len(column_names)} are required."
-            )
-            return None
-        logging.info(f"Auto-fixed row for table `{table_name}`: {row} -> {candidate}")
-        return candidate
+    # def _attempt_row_alignment_fix(self, table_name, row, column_names, column_types):
+    #     """
+    #     Attempt to repair a minor column count mismatch by asking the backbone LLM
+    #     to produce an aligned row that matches the table schema.
+    #     """
+    #     if not getattr(self, "repair_parser", None):
+    #         return None
+    #     if not column_names or not column_types:
+    #         return None
+    #     column_spec_payload = []
+    #     for idx, name in enumerate(column_names):
+    #         column_spec_payload.append({
+    #             "name": name,
+    #             "type": column_types[idx] if idx < len(column_types) else "TEXT"
+    #         })
+    #     issue_description = (
+    #         f"Table `{table_name}` expects {len(column_names)} columns but received {len(row)}."
+    #     )
+    #     prompt = get_prompt(template_name="noise_data_alignment_fix")
+    #     response, _ = self.backbone(
+    #         prompt,
+    #         self.repair_parser,
+    #         request_kwargs={
+    #             "HINT": self.hint,
+    #             "QUESTION": self.nl,
+    #             "TABLE_NAME": table_name,
+    #             "COLUMN_SPEC": json.dumps(column_spec_payload, ensure_ascii=False, indent=2),
+    #             "ROW_VALUES": json.dumps(list(row), ensure_ascii=False),
+    #             "ISSUE_DESCRIPTION": issue_description
+    #         }
+    #     )
+    #     fixed_rows = response.get("fixed_rows") if isinstance(response, dict) else None
+    #     if not isinstance(fixed_rows, dict): return None
+    #     candidate = fixed_rows.get(table_name)
+    #     if candidate is None and fixed_rows:
+    #         candidate = next(iter(fixed_rows.values()))
+    #     if candidate is None:
+    #         return None
+    #     if len(candidate) != len(column_names):
+    #         logging.warning(
+    #             f"Row auto-fix produced {len(candidate)} values for `{table_name}`, "
+    #             f"but {len(column_names)} are required."
+    #         )
+    #         return None
+    #     logging.info(f"Auto-fixed row for table `{table_name}`: {row} -> {candidate}")
+    #     return candidate
         
     def _form_instance(self, idx, ret):
         """
@@ -1062,7 +829,6 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
         history, outputs = [], []
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
-        max_workers = max(1, min(self.parallel_workers, self.num))
 
         def _generate_candidate(history_string):
             ret = Munch()
@@ -1091,9 +857,9 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
             futures.add(future)
             return True
 
-        with spinner and ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
             futures = set()
-            for _ in range(max_workers):
+            for _ in range(self.parallel_workers):
                 if not submit_task(executor, futures):
                     break
 
@@ -1116,8 +882,6 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
                     try:
                         with state_lock:
                             self._validate_test_fixture(response, history)
-                            if ret.test_fixtures.data is None:
-                                raise ValidationError("Missing `injected_rows` in response.")
                             history.append(ret.test_fixtures)
                             appended_to_history = True
                             outputs.append(self._form_instance(len(outputs), ret))
@@ -1308,162 +1072,6 @@ class CrossModelTestClass(TestClass):
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
-class SelfConsistencyTestClass(TestClass):
-    def __init__(self):
-        super().__init__("Query Consistency Test Class", "query_consistency", "differential")
-    
-    def set(self, **kwargs):
-        super().set(**kwargs)
-        self.num=3
-        self.criteria=0.3
-        self.max_retry = self.num # hard-code the max retry to be the number of test cases
-        self.cnt = 0
-        self.nl_mutants = None
-        self.nl_mutants_sql_outputs = None
-        self.nl_mutants_saved_path = "spider_dev_nl_mutants.json"
-        self.nl_mutants_sql_outputs_path = "codes_pred_nl_mutants.sql"
-        # NOTICE!!! 
-        # this test pre-checks whether there are predicted SQL outputs; 
-        # If exists, will do the test; Otherwise, generate nl mutants and do fake testing.
-        if os.path.exists(self.nl_mutants_sql_outputs_path):
-            print(f"Predicted SQL outputs detected (`{self.nl_mutants_sql_outputs_path}`), ensure that you're aware of the behavior of using them...")
-            with open(self.nl_mutants_saved_path) as f:
-                self.nl_mutants = json.load(f)
-            assert len(self.nl_mutants) % self.num == 0, f"The number of NL mutants ({len(self.nl_mutants)}) should be a multiple of the number of test cases ({self.num})"
-            lines = open(self.nl_mutants_sql_outputs_path).readlines()
-            self.nl_mutants_sql_outputs = lines[:self.num]
-            with open(self.nl_mutants_sql_outputs_path, "w") as f:
-                f.writelines(lines[self.num:])
-        self.test_cases = self._generator()
-
-    def _compare_query_results(self, pred, target):
-        if pred and target and set(target) == set(pred):
-            return True
-        return False
-    
-    def _test_fn(self, ret: Munch):
-        ret.results = Munch()
-        ret.results.pred = None if validate_sql_query(self.db_path, ret.test_fixtures.predict_sql)["STATUS"] != "OK" else execute_sql(self.db_path, ret.test_fixtures.predict_sql)
-        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" else execute_sql(self.db_path, self.sql)
-        ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
-    
-    def _validate_test_fixture(self, response, history):
-        def __output_format_check(response):
-            if not isinstance(response, dict):
-                raise ValidationError(
-                    f"Output format(type) check failed. "
-                    f"response type: {type(response)}, "
-                    f"Expected type: dict"
-                )
-            if ("NL" not in response.keys() and "nl" not in response.keys()) and ("SQL" not in response.keys() and 'sql' not in response.keys()): 
-                raise ValidationError(
-                    f"Output format(key) check failed. "
-                    f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `nl` or `sql`"
-                )
-            # normalize key name
-            if "NL" in response.keys(): response["nl"] = response.pop("NL")
-            if "SQL" in response.keys(): response["sql"] = response.pop("SQL")
-            return True
-        def __response_history_compatible_check(response, history):
-            if any(h.nl_mutant == response["nl"] for h in history):
-                raise ValidationError(f"Duplicate response (nl mutant) detected.")
-            return True
-        def __sql_executable_check(response, db_path):
-            res = validate_sql_query(db_path, response["sql"])
-            if res["STATUS"] != "OK":
-                raise ValidationError(
-                        f"SQL executable check failed. "
-                        f"Fail log from DBMS: {res['RESULT']}"
-                    )
-            return True
-        __output_format_check(response)
-        if "sql" in response.keys(): __sql_executable_check(response, self.db_path)
-        else: __response_history_compatible_check(response, history)
-        return True
-    
-    def _form_instance(self, idx, ret):
-        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-            nl=self.nl,
-            sql=self.sql, 
-            nl_mutant=ret.test_fixtures.nl_mutant,
-            predict_sql=ret.test_fixtures.predict_sql)
-        
-        return ret
-    
-    def _generator(self, verbose=True):
-        def __history_to_string(history):
-            return "\n".join(
-                f"--- Example {i+1} ---\n"
-                f"nl mutation: {h.nl_mutant}\n\n"
-                for i, h in enumerate(history)
-            )
-        
-        if self.use_cache: return self._load_cached_test_cases()
-
-        parser = get_parser(parser_name="nl_mutation_generation")
-        history, outputs = [], []
-        retry = 0
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while len(outputs) < self.num and retry < self.max_retry:
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                tokens = 0
-                # Generate nl mutants and using the original sql as fake prediction
-                if not self.nl_mutants:
-                    prompt = get_prompt(
-                        template_name="nl_mutation_generation",
-                        history_string=__history_to_string(history) if history else None
-                    )
-                    response, metadata = self.backbone(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
-                    tokens += metadata.get("token_used", 0)
-                    try:
-                        self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
-                    except ValidationError as e:
-                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                        retry += 1
-                        continue
-                    # Temporarily save the generated NL mutants for future model ensemble use
-                    data_to_add = [{"db_id": self.db_id, "question": response["nl"], "query": self.sql}]
-                    if os.path.exists(self.nl_mutants_saved_path):
-                        with open(self.nl_mutants_saved_path) as f:
-                            try:
-                                data = json.load(f)
-                            except json.JSONDecodeError:
-                                data = []
-                    else:
-                        data = []
-                    data.extend(data_to_add)
-                    with open(self.nl_mutants_saved_path, "w") as f: json.dump(data, f, indent=4)
-                    response2 = {"sql": self.sql} # fake prediction
-                    try:
-                        self._validate_test_fixture(response2, history)
-                    except ValidationError as e:
-                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")    
-                        retry += 1
-                        continue
-                else:
-                    response = {"nl": self.nl_mutants[self.cnt]["question"]}
-                    response2 = {"sql": self.nl_mutants_sql_outputs[self.cnt]}
-                    self.cnt += 1
-                ret.token_used = tokens
-                ret.logprob = metadata.get("logprob", None)
-                ret.test_fixtures.nl_mutant = response["nl"]
-                ret.test_fixtures.predict_sql = response2["sql"]
-                history.append(ret.test_fixtures)
-                outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
-        return outputs
-
 class QueryReviewTestClass(TestClass):
     def __init__(self):
         super().__init__("Step-through Query Review Test Class", "query_review", "explore")
@@ -1597,6 +1205,13 @@ class NLReviewTestClass(TestClass):
 
     def set(self, **kwargs):
         super().set(**kwargs)
+        self.num = 3
+        self.max_retry = self.num
+        self.parallel_workers = self.num
+        self.prompt = get_prompt(template_name="nl_paraphrase_generation", schema_string=self.schema_string)
+        self.prompt2 = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
+        self.parser = get_parser(parser_name="nl_paraphrase_generation")
+        self.parser2 = get_parser(parser_name="nl_rubber_duck_debugging")
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, targets):
@@ -1629,32 +1244,279 @@ class NLReviewTestClass(TestClass):
         
         return ret
     
-    def _generator(self):
+    def _validate_test_fixture(self, response, key="paraphrases"):
+        def __output_format_check(response, key):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
+            if key not in response.keys():
+                raise ValidationError(
+                    f"Output format(key) check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `{key}`"
+                )
+            return True
+
+        __output_format_check(response, key)
+        if not isinstance(response[key], list) or len(response[key]) < 2:
+            raise ValidationError(
+                f"Paraphrase count check failed. "
+                f"Expected at least 2 paraphrases, got {len(response[key]) if isinstance(response[key], list) else 'invalid'}."
+            )
+       
+    def _generator(self, verbose=True):
+        def _prepare_paraphrases():
+            retry = 0
+            paraphrases = [self.nl]
+            while len(paraphrases) < 3 and retry < self.max_retry:
+                response, _ = self.backbone(self.prompt, self.parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl, "SQL": self.sql})
+                try:
+                    self._validate_test_fixture(response)
+                except ValidationError as e:
+                    attempts += 1
+                    logging.warning(f"Paraphrase validation failed (attempt {attempts}/{self.max_retry}): {e}")
+                    continue
+                paraphrases.extend(response["paraphrases"])
+            return paraphrases
+        def _generate_candidate(paraphrase):
+            attempts = 0
+            last_exc = None
+            while attempts < self.max_retry:
+                attempts += 1
+                try:
+                    ret = Munch()
+                    ret.test_fixtures = Munch()
+                    preview = paraphrase.replace("\n", " ")[:32]
+                    trace = f"->>Parallel Test Case [{preview}] Tracelog<<-\n"
+                    response, metadata = self.backbone(
+                        self.prompt2,
+                        self.parser2,
+                        request_kwargs={"HINT": self.hint, "QUESTION": paraphrase, "SQL": self.sql},
+                    )
+                    trace += (
+                        f"{response['chain_of_thought_reasoning']} -> "
+                        f"{response['judgment']}\n"
+                    )
+                    ret.logprob = metadata.get("logprob", None)
+                    ret.token_used = metadata.get("token_used", 0)
+                    ret.trace = trace
+                    ret.test_fixtures.turns = [response]
+                    return ret
+                except Exception as exc:
+                    last_exc = exc
+                    logging.warning(
+                        f"NL review test case generation failed (attempt {attempts}/{self.max_retry}): {exc}"
+                    )
+            if last_exc:
+                raise last_exc
+            raise RuntimeError("NL review paraphrase generation failed without exception.")
+
+        paraphrases = _prepare_paraphrases()
         outputs = []
-        ret = Munch()
-        ret.test_fixtures = Munch()
-        parser = get_parser(parser_name="nl_rubber_duck_debugging")
-        prompt = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
+        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        state_lock = threading.Lock()
+        paraphrase_queue = deque(paraphrases)
+        futures = {}
+
+        def submit_task(executor):
+            with state_lock:
+                if not paraphrase_queue:
+                    return False
+                paraphrase = paraphrase_queue.popleft()
+            future = executor.submit(_generate_candidate, paraphrase)
+            futures[future] = paraphrase
+            return True
+
+        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            for _ in range(min(self.parallel_workers, len(paraphrases))):
+                if not submit_task(executor):
+                    break
+
+            while futures and len(outputs) < self.num:
+                done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
+                for fut in done:
+                    paraphrase = futures.pop(fut)
+                    try:
+                        case_ret = fut.result()
+                    except ValidationError as e:
+                        logging.warning(f"NL review test fixture validation failed: {e}")
+                        with state_lock:
+                            paraphrase_queue.append(paraphrase)
+                    except Exception as exc:
+                        logging.warning(f"NL review test case generation failed: {exc}")
+                        with state_lock:
+                            paraphrase_queue.append(paraphrase)
+                    else:
+                        with state_lock:
+                            outputs.append(self._form_instance(len(outputs), case_ret))
+                            if verbose:
+                                spinner.set_message(f"Generated {len(outputs)} test cases ...")
+
+                    if len(outputs) >= self.num:
+                        break
+
+                    submit_task(executor)
+
+            for fut in futures:
+                fut.cancel()
+
+        return outputs
+
+class SelfConsistencyTestClass(TestClass):
+    def __init__(self):
+        super().__init__("Query Consistency Test Class", "query_consistency", "differential")
+    
+    def set(self, **kwargs):
+        super().set(**kwargs)
+        self.num=3
+        self.max_retry = 3
+        self.criteria=0.6
+        self.cnt = 0
+        self.nl_mutants = None
+        self.nl_mutants_sql_outputs = None
+        self.nl_mutants_saved_path = "spider_dev_nl_mutants.json"
+        self.nl_mutants_sql_outputs_path = "codes_pred_nl_mutants.sql"
+        # NOTICE!!! 
+        # this test pre-checks whether there are predicted SQL outputs; 
+        # If exists, will do the test; Otherwise, generate nl mutants and do fake testing.
+        if os.path.exists(self.nl_mutants_sql_outputs_path):
+            print(f"Predicted SQL outputs detected (`{self.nl_mutants_sql_outputs_path}`), ensure that you're aware of the behavior of using them...")
+            with open(self.nl_mutants_saved_path) as f:
+                self.nl_mutants = json.load(f)
+            assert len(self.nl_mutants) % self.num == 0, f"The number of NL mutants ({len(self.nl_mutants)}) should be a multiple of the number of test cases ({self.num})"
+            lines = open(self.nl_mutants_sql_outputs_path).readlines()
+            self.nl_mutants_sql_outputs = lines[:self.num]
+            with open(self.nl_mutants_sql_outputs_path, "w") as f:
+                f.writelines(lines[self.num:])
+        self.test_cases = self._generator()
+
+    def _compare_query_results(self, pred, target):
+        if pred and target and set(target) == set(pred):
+            return True
+        return False
+    
+    def _test_fn(self, ret: Munch):
+        ret.results = Munch()
+        ret.results.pred = None if validate_sql_query(self.db_path, ret.test_fixtures.predict_sql)["STATUS"] != "OK" \
+            else execute_sql(self.db_path, ret.test_fixtures.predict_sql)
+        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" \
+            else execute_sql(self.db_path, self.sql)
+        ret.results.standard = "pred == target"
+        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
+    
+    def _validate_test_fixture(self, response, history):
+        def __output_format_check(response):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
+            if ("NL" not in response.keys() and "nl" not in response.keys()) and ("SQL" not in response.keys() and 'sql' not in response.keys()): 
+                raise ValidationError(
+                    f"Output format(key) check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `nl` or `sql`"
+                )
+            # normalize key name
+            if "NL" in response.keys(): response["nl"] = response.pop("NL")
+            if "SQL" in response.keys(): response["sql"] = response.pop("SQL")
+            return True
+        def __response_history_compatible_check(response, history):
+            if any(h.nl_mutant == response["nl"] for h in history):
+                raise ValidationError(f"Duplicate response (nl mutant) detected.")
+            return True
+        def __sql_executable_check(response, db_path):
+            res = validate_sql_query(db_path, response["sql"])
+            if res["STATUS"] != "OK":
+                raise ValidationError(
+                        f"SQL executable check failed. "
+                        f"Fail log from DBMS: {res['RESULT']}"
+                    )
+            return True
+        __output_format_check(response)
+        if "sql" in response.keys(): __sql_executable_check(response, self.db_path)
+        else: __response_history_compatible_check(response, history)
+        return True
+    
+    def _form_instance(self, idx, ret):
+        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
+        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
+        
+        # test case serialization
+        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
+            nl=self.nl,
+            sql=self.sql, 
+            nl_mutant=ret.test_fixtures.nl_mutant,
+            predict_sql=ret.test_fixtures.predict_sql)
+        
+        return ret
+    
+    def _generator(self, verbose=True):
+        def __history_to_string(history):
+            return "\n".join(
+                f"--- Example {i+1} ---\n"
+                f"nl mutation: {h.nl_mutant}\n\n"
+                for i, h in enumerate(history)
+            )
+        
+        parser = get_parser(parser_name="nl_mutation_generation")
+        history, outputs = [], []
+        retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
-            while len(outputs) < self.num:
+            while len(outputs) < self.num and retry < self.max_retry:
+                ret = Munch()
+                ret.test_fixtures = Munch()
                 tokens = 0
-                trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"                
-                response, metadata = self.backbone(prompt, parser, request_kwargs={
-                    "HINT": self.hint, 
-                    "QUESTION": self.nl,
-                    "SQL": self.sql
-                    }
-                )
-                trace += f"{response['chain_of_thought_reasoning']}\n"
-                trace += f"{response['judgment']}"
-                tokens += metadata.get("token_used", 0)
-                
-                # token usuage and logprobs
-                ret.logprob = metadata.get("logprob", None)
+                # Generate nl mutants and using the original sql as fake prediction
+                if not self.nl_mutants:
+                    prompt = get_prompt(
+                        template_name="nl_mutation_generation",
+                        history_string=__history_to_string(history) if history else None
+                    )
+                    response, metadata = self.backbone(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
+                    tokens += metadata.get("token_used", 0)
+                    try:
+                        self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
+                    except ValidationError as e:
+                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                        retry += 1
+                        continue
+                    # Temporarily save the generated NL mutants for future model ensemble use
+                    data_to_add = [{"db_id": self.db_id, "question": response["nl"], "query": self.sql}]
+                    if os.path.exists(self.nl_mutants_saved_path):
+                        with open(self.nl_mutants_saved_path) as f:
+                            try:
+                                data = json.load(f)
+                            except json.JSONDecodeError:
+                                data = []
+                    else:
+                        data = []
+                    data.extend(data_to_add)
+                    with open(self.nl_mutants_saved_path, "w") as f: json.dump(data, f, indent=4)
+                    response2 = {"sql": self.sql} # fake prediction
+                    try:
+                        self._validate_test_fixture(response2, history)
+                    except ValidationError as e:
+                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")    
+                        retry += 1
+                        continue
+                else:
+                    response = {"nl": self.nl_mutants[self.cnt]["question"]}
+                    response2 = {"sql": self.nl_mutants_sql_outputs[self.cnt]}
+                    self.cnt += 1
                 ret.token_used = tokens
-                ret.trace = trace
-                ret.test_fixtures.turns = [response]
+                ret.logprob = metadata.get("logprob", None)
+                ret.test_fixtures.nl_mutant = response["nl"]
+                ret.test_fixtures.predict_sql = response2["sql"]
+                history.append(ret.test_fixtures)
                 outputs.append(self._form_instance(len(outputs), ret))
-        
+                spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs

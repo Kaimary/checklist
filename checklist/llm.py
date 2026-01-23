@@ -130,7 +130,7 @@ class LLM:
                     # 把 NULL 替换成字符串 "NULL"
                     raw_output.content = re.sub(r'(?<=,\s)NULL\b', '"NULL"', raw_output.content)
                     # 转义反斜杠 \
-                    raw_output.content = re.sub(r'(".*?")', lambda m: m.group(0).replace('\\', '\\\\'), raw_output.content)
+                    # raw_output.content = re.sub(r'(".*?")', lambda m: m.group(0).replace('\\', '\\\\'), raw_output.content)
                     # # 转义双引号 "
                     # raw_output.content = re.sub(r'(".*?")', lambda m: m.group(0).replace('"', '\\"'), raw_output.content)
                 output = parser.invoke(raw_output)

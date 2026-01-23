@@ -164,6 +164,10 @@ class RubberDuckDebuggingOutput(BaseModel):
     reasoning_summary: str = Field(description="reasoning summary")
     judgment: str = Field(description="Yes or No")
 
+class NLParaphraseOutput(BaseModel):
+    """Model for paraphrase generation output."""
+    paraphrases: List[str] = Field(description="Two semantically equivalent paraphrases of the input question.")
+
 def get_parser(parser_name: str) -> BaseOutputParser:
     """
     Returns the appropriate parser based on the provided parser name.
@@ -198,6 +202,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "noise_data_alignment_fix": lambda: JsonOutputParser(pydantic_object=NoiseDataAlignmentFixOutput),
         "llm_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMJudgmentOutput),
         "nl_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
+        "nl_paraphrase_generation": lambda: JsonOutputParser(pydantic_object=NLParaphraseOutput),
         "query_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "llm_cot_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "schema_pruning": lambda: JsonOutputParser(pydantic_object=SchemaPruningParser),
