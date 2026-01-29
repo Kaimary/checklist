@@ -298,6 +298,7 @@ class TestSuite:
                 "judgment": judgment,
                 "total": len(passed),
                 "passed": int(np.sum(passed)),
+                "results": passed.tolist(),
                 "logprobs": logprobs,
                 "tokens_used": tokens_used,
                 "criteria": criteria,

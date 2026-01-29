@@ -44,7 +44,7 @@ class SemanticCheckTestClass(TestClass):
         ret.results.pred = [bug for bug in ret.test_fixtures.bugs if type(bug) == str or bug.level == BugLevel.ERROR]
         ret.results.standard = "pred is empty"
         passed = self._compare_query_results(ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, None, 0
+        return passed, ret.test_fixtures, ret.results, None, 0, ""
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -152,16 +152,38 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
 
     def _compare_query_results(self, preds, oracles):
+        def __normalize_scalar(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                stripped = value.strip()
+                try:
+                    return float(stripped)
+                except ValueError:
+                    return value
+            return value
         def __freeze(obj):
             """Recursively convert unhashable objects into hashable equivalents."""
             if isinstance(obj, dict):
                 return tuple(sorted((k, __freeze(v)) for k, v in obj.items()))
-            elif isinstance(obj, (list, tuple, set)):
-                return tuple(__freeze(x) for x in obj)
+            elif isinstance(obj, tuple) or isinstance(obj, list):
+                items = [__freeze(x) for x in obj]
+                try:
+                    return tuple(sorted(items))
+                except TypeError:
+                    return tuple(sorted(items, key=lambda v: repr(v)))
+            elif isinstance(obj, set):
+                items = [__freeze(x) for x in obj]
+                try:
+                    return tuple(sorted(items))
+                except TypeError:
+                    return tuple(sorted(items, key=lambda v: repr(v)))
             elif isinstance(obj, np.ndarray):
-                return tuple(obj.tolist())
+                return __freeze(tuple(obj.tolist()))
             else:
-                return obj
+                return __normalize_scalar(obj)
         def __is_subset(pred, oracle_row):
             """Check if pred tuple is a subsequence of oracle_row tuple."""
             n, m = len(pred), len(oracle_row)
@@ -172,15 +194,15 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                 if oracle_row[i:i+n] == pred:
                     return True
             return False
-
-        if not preds or not oracles: return False
+        if preds is None or oracles is None: return False
+        if len(preds) != len(oracles): return False
 
         preds_frozen = [__freeze(p) for p in preds]
         oracle_frozen = [__freeze(o) for o in oracles]
 
-        # relax the comparision if one column matches, cuz `oracles` may include redunctant columns
         for p in preds_frozen:
-            if not any(__is_subset(p, o) for o in oracle_frozen): return False
+            if not any(__is_subset(p, o) or __is_subset(o, p) for o in oracle_frozen):
+                return False
         return True
     
     def _test_fn(self, ret: Munch):
@@ -191,7 +213,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
         # the simulated database can't execute the sql propertly, most probably the simulation missing some pk/fk-like columns
         # to ensure good performance, set a special tag in the ret to make final detection as "UNDETERMINED"
-        if not ret.results.pred: ret.results.orc_tag = True
+        if ret.results.pred is None: ret.results.orc_tag = True
         ret.results.target = ret.test_fixtures.label_result["rows"] if "rows" in ret.test_fixtures.label_result.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
@@ -562,36 +584,8 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
         self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
-        def __freeze(obj):
-            """Recursively convert unhashable objects into hashable equivalents."""
-            if isinstance(obj, dict):
-                return tuple(sorted((k, __freeze(v)) for k, v in obj.items()))
-            elif isinstance(obj, (list, tuple, set)):
-                return tuple(__freeze(x) for x in obj)
-            elif isinstance(obj, np.ndarray):
-                return tuple(obj.tolist())
-            else:
-                return obj
-        def __is_subset(pred, oracle_row):
-            """Check if pred tuple is a subsequence of oracle_row tuple."""
-            n, m = len(pred), len(oracle_row)
-            if n > m:
-                return False
-            # 尝试匹配 pred 在 oracle_row 中的某个连续子序列
-            for i in range(m - n + 1):
-                if oracle_row[i:i+n] == pred:
-                    return True
-            return False
-
         if not preds or not oracles: return False
-
-        preds_frozen = [__freeze(p) for p in preds]
-        oracle_frozen = [__freeze(o) for o in oracles]
-
-        # relax the comparision if one column matches, cuz `oracles` may include redunctant columns
-        for p in preds_frozen:
-            if not any(__is_subset(p, o) for o in oracle_frozen): return False
-        return True
+        return len(preds) == len(oracles)
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
@@ -740,53 +734,6 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
         # response duplication check
         __response_history_compatible_check(response, history)
 
-    # def _attempt_row_alignment_fix(self, table_name, row, column_names, column_types):
-    #     """
-    #     Attempt to repair a minor column count mismatch by asking the backbone LLM
-    #     to produce an aligned row that matches the table schema.
-    #     """
-    #     if not getattr(self, "repair_parser", None):
-    #         return None
-    #     if not column_names or not column_types:
-    #         return None
-    #     column_spec_payload = []
-    #     for idx, name in enumerate(column_names):
-    #         column_spec_payload.append({
-    #             "name": name,
-    #             "type": column_types[idx] if idx < len(column_types) else "TEXT"
-    #         })
-    #     issue_description = (
-    #         f"Table `{table_name}` expects {len(column_names)} columns but received {len(row)}."
-    #     )
-    #     prompt = get_prompt(template_name="noise_data_alignment_fix")
-    #     response, _ = self.backbone(
-    #         prompt,
-    #         self.repair_parser,
-    #         request_kwargs={
-    #             "HINT": self.hint,
-    #             "QUESTION": self.nl,
-    #             "TABLE_NAME": table_name,
-    #             "COLUMN_SPEC": json.dumps(column_spec_payload, ensure_ascii=False, indent=2),
-    #             "ROW_VALUES": json.dumps(list(row), ensure_ascii=False),
-    #             "ISSUE_DESCRIPTION": issue_description
-    #         }
-    #     )
-    #     fixed_rows = response.get("fixed_rows") if isinstance(response, dict) else None
-    #     if not isinstance(fixed_rows, dict): return None
-    #     candidate = fixed_rows.get(table_name)
-    #     if candidate is None and fixed_rows:
-    #         candidate = next(iter(fixed_rows.values()))
-    #     if candidate is None:
-    #         return None
-    #     if len(candidate) != len(column_names):
-    #         logging.warning(
-    #             f"Row auto-fix produced {len(candidate)} values for `{table_name}`, "
-    #             f"but {len(column_names)} are required."
-    #         )
-    #         return None
-    #     logging.info(f"Auto-fixed row for table `{table_name}`: {row} -> {candidate}")
-    #     return candidate
-        
     def _form_instance(self, idx, ret):
         """
         Form each single test case, and save related test fixture for serialization. 
@@ -926,8 +873,8 @@ class CrossModelTestClass(TestClass):
         super().set(**kwargs)
         self.num=3
         self.active_model_num = 3
-        model_list=(["resdsql", "codes15b", "dailsql", "llm:deepseek-chat"] if "spider" in self.db_root_path else \
-                     ["chess", "cscsql32b", "omnisql32b", "llm:deepseek-chat"])
+        model_list=(["resdsql", "codes15b", "dailsql", "llm:gpt-5.1"] if "spider" in self.db_root_path else \
+                     ["chess", "cscsql32b", "omnisql32b", "llm:gpt-5.1"])
         self.model_pool = self._create_nl2sql_model_pool(model_list)
         self.test_cases = self._generator()
 
@@ -968,7 +915,7 @@ class CrossModelTestClass(TestClass):
         except:
             ret.results.target = None
             passed = False
-        return passed, ret.test_fixtures, ret.results, None, 0
+        return passed, ret.test_fixtures, ret.results, None, 0, ""
     
     def _validate_test_fixture(self, candidates):
         def __sql_executable_check(candidate, db_path):
@@ -1014,8 +961,6 @@ class CrossModelTestClass(TestClass):
                 f"invalid sql {idx+1}:\n{invalid[0]}\nerror:{invalid[1]}"
                 for idx, invalid in enumerate(invalids)
             )
-        
-        if self.use_cache: return self._load_cached_test_cases()
 
         prompt = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser = get_parser(parser_name="nl2sql_translation")
@@ -1079,19 +1024,16 @@ class QueryReviewTestClass(TestClass):
     def set(self, red_schema, **kwargs):
         super().set(**kwargs)
         self.schema = red_schema
+        self.parser = get_parser(parser_name="query_rubber_duck_debugging")
+        self.prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
         self.test_cases = self._generator()
-
-    def _compare_query_results(self, preds, targets):
-        for pred, target in zip(preds, targets):
-            if pred != target: return False
-        return True
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.pred = [f"{turn['judgment']}" for turn in ret.test_fixtures.turns]
-        ret.results.target = ['True' for _ in ret.test_fixtures.turns]
+        ret.results.pred = ret.test_fixtures.turns['judgment']
+        ret.results.target = True
         ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        passed = ret.results.pred
         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
         
     def _form_instance(self, idx, ret):
@@ -1127,60 +1069,33 @@ class QueryReviewTestClass(TestClass):
                 )
                 sub_sqls.append(sql.strip())
             return sub_sqls
-        
         def _format_sub_sqls_with_results(sub_sqls):
-            summary = {
-                "note": "Each step shows the cumulative SQL and up to 5 rows from executing it.",
-                "steps": []
-            }
+            output = ""
             for idx, sub_sql in enumerate(sub_sqls, 1):
                 exec_summary = validate_sql_query(self.db_path, sub_sql, max_returned_rows=10)
                 preview = exec_summary.get("RESULT")
-                if isinstance(preview, list) and len(preview) > 5:
-                    preview = preview[:5]
-                summary["steps"].append(
-                    {
-                        "step": idx,
-                        "sql": sub_sql,
-                        "status": exec_summary.get("STATUS", "UNKNOWN"),
-                        "result_preview": preview,
-                    }
-                )
-            return json.dumps(summary, ensure_ascii=False, indent=2, default=str)
+                if isinstance(preview, list) and len(preview) > 5: preview = preview[:5]
+                output += f"SUBSQL-{idx}: {sub_sql}\nEXECUTION: {exec_summary.get('STATUS', 'unknown')}\nRESULT PREVIEW: {preview}\n"
+            return output
 
         # Obtain query clauses for next debugging purpose
-        subsql_context = json.dumps(
-            {
-                "note": "Unable to derive intermediate SQL steps for this query.",
-                "steps": [],
-            },
-            ensure_ascii=False,
-        )
+        subsql_context = ""
         try:
             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
             subsqls = _build_sub_sqls(parsed_query)
             subsql_context = _format_sub_sqls_with_results(subsqls)
         except Exception as e:
             print(e)
-            subsql_context = json.dumps(
-                {
-                    "note": f"Failed to derive intermediate SQL steps due to: {e}",
-                    "steps": [],
-                },
-                ensure_ascii=False,
-            )
+            subsql_context = "Failed to derive intermediate SQL steps due to: {e}"
         
         outputs = []
         ret = Munch()
         ret.test_fixtures = Munch()
-        parser = get_parser(parser_name="query_rubber_duck_debugging")
-        prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         with spinner:
             while len(outputs) < self.num:
-                tokens = 0
                 trace = f"->>Test Case {len(outputs)+1} Tracelog<<-\n"
-                response, metadata = self.backbone(prompt, parser, request_kwargs={
+                response, metadata = self.backbone(self.prompt, self.parser, request_kwargs={
                     "HINT": self.hint, 
                     "QUESTION": self.nl,
                     "SQL": self.sql,
@@ -1189,11 +1104,10 @@ class QueryReviewTestClass(TestClass):
                 )
                 trace += f"{response['chain_of_thought_reasoning']}\n"
                 trace += f"{response['judgment']}"
-                tokens += metadata.get("token_used", 0)
 
-                ret.token_used = tokens
-                ret.logprob = None
-                ret.test_fixtures.turns = [response]
+                ret.token_used = metadata.get("token_used", 0)
+                ret.logprob = metadata.get("logprob", None)
+                ret.test_fixtures.turns = response
                 ret.trace = trace
                 outputs.append(self._form_instance(len(outputs), ret))
 
@@ -1213,18 +1127,13 @@ class NLReviewTestClass(TestClass):
         self.parser = get_parser(parser_name="nl_paraphrase_generation")
         self.parser2 = get_parser(parser_name="nl_rubber_duck_debugging")
         self.test_cases = self._generator()
-
-    def _compare_query_results(self, preds, targets):
-        for pred, target in zip(preds, targets):
-            if pred != target: return False
-        return True
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.pred = [f"{turn['judgment']}" for turn in ret.test_fixtures.turns]
-        ret.results.target = ['True' for _ in ret.test_fixtures.turns]
+        ret.results.pred = ret.test_fixtures.turns['judgment']
+        ret.results.target = True
         ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        passed = ret.results.pred
         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
         
     def _form_instance(self, idx, ret):
@@ -1303,7 +1212,7 @@ class NLReviewTestClass(TestClass):
                     ret.logprob = metadata.get("logprob", None)
                     ret.token_used = metadata.get("token_used", 0)
                     ret.trace = trace
-                    ret.test_fixtures.turns = [response]
+                    ret.test_fixtures.turns = response
                     return ret
                 except Exception as exc:
                     last_exc = exc

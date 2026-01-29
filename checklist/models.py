@@ -71,7 +71,8 @@ class OMNISQL32b(BaseNL2SQLModel):
         dev_json = "data/bird/dev.json"
         output_file = "data/bird/results/omnisql-32b.sql"
         self.dev = json.load(open(dev_json))
-        self.outputs = [line.strip() for line in open(output_file)]
+        self.outputs = [line.strip().encode('utf-8').decode('unicode_escape')
+                        for line in open(output_file)]
 
     def __call__(self, **kwargs):
         nl = kwargs.get("nl", None)
@@ -107,7 +108,8 @@ class DAILSQL(BaseNL2SQLModel):
         dev_json = "data/spider/dev.json"
         output_file = "data/spider/results/dailsql.sql"
         self.dev = json.load(open(dev_json))
-        self.outputs = [line.strip() for line in open(output_file)]
+        self.outputs = [line.strip().encode('utf-8').decode('unicode_escape')
+                        for line in open(output_file)]
 
     def __call__(self, **kwargs):
         nl = kwargs.get("nl", None)
@@ -125,7 +127,8 @@ class CODES7b(BaseNL2SQLModel):
         dev_json = "data/spider/dev.json"
         output_file = "data/spider/results/codes-7b.sql"
         self.dev = json.load(open(dev_json))
-        self.outputs = [line.strip() for line in open(output_file)]
+        self.outputs = [line.strip().encode('utf-8').decode('unicode_escape')
+                        for line in open(output_file)]
 
     def __call__(self, **kwargs):
         nl = kwargs.get("nl", None)
@@ -143,7 +146,8 @@ class CODES15b(BaseNL2SQLModel):
         dev_json = "data/spider/dev.json"
         output_file = "data/spider/results/codes-15b.sql"
         self.dev = json.load(open(dev_json))
-        self.outputs = [line.strip() for line in open(output_file)]
+        self.outputs = [line.strip().encode('utf-8').decode('unicode_escape') 
+                        for line in open(output_file)]
 
     def __call__(self, **kwargs):
         nl = kwargs.get("nl", None)
