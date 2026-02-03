@@ -69,12 +69,13 @@ class GuardianJudge(AbstractJudge):
             test_instance = test()  # Create an instance of the test class
             self.suite.add(test_instance, name=test.__name__)
 
-    def set(self, nl, hint, sql, db_id, db_root_path, red_schema):
+    def set(self, nl, hint, sql, gold, db_id, db_root_path, red_schema):
         self.suite.set(
             backbone=self.backbone,
             nl=nl,
             hint=hint,
             sql=sql,
+            gold=gold,
             db_id=db_id,
             db_root_path=db_root_path,
             red_schema=red_schema
@@ -83,5 +84,5 @@ class GuardianJudge(AbstractJudge):
     def run(self):
         return self.suite.run1()
     
-    def summary(self, ret, baseline_judgment, gold):
-        return self.suite.summary1(ret, baseline_judgment, gold)
+    def summary(self, ret, munch, baseline_judgment, gold):
+        return self.suite.summary1(ret, munch, baseline_judgment, gold)

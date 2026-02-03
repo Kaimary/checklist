@@ -58,7 +58,6 @@ class SchemaCache:
 
 class SchemaPruningMixin:
     """Shared helpers for classes that optionally prune large schemas via LLM."""
-
     def _quote_identifier(self, identifier: str) -> str:
         escaped = identifier.replace('"', '""')
         return f'"{escaped}"'
@@ -79,6 +78,8 @@ class SchemaPruningMixin:
                 if match.group(5):
                     return match.group(5)
             return None
+        if not response or not isinstance(response, dict):
+            raise ValidationError("Pruned schema type checking failed.")
 
         schema_generator = DatabaseSchemaGenerator(
             tentative_schema=DatabaseSchema.from_schema_dict(response),
@@ -106,7 +107,6 @@ class SchemaPruningMixin:
                     pk_column_name = __extract_column_name(column_def)
                     if pk_column_name not in response[table_name]:
                         response[table_name].insert(0, pk_column_name)
-            return True
 
     def _copy_rows_into_pruned_db(self, target_db_path, schema_subset):
         dest_conn = sqlite3.connect(target_db_path)
@@ -148,34 +148,36 @@ class SchemaPruningMixin:
     def _prune_schema_if_needed(
         self,
         schema,
-        pruning_threshold,
-        matched_conditions=None,
-        matched_keys=None,
+        threshold,
+        kept
     ):
         self.schema_pruned = False
         self._pruned_db_build_event = None
         self._pruned_db_build_error = None
         self._pruned_db_snapshot_path = None
-        if pruning_threshold is None:
+        if threshold is None:
             return schema, False
-        if not any(len(cols) > pruning_threshold for cols in schema.values()):
+        # exclude table pruning as existing benchmarks do not have many tables
+        tables_larger_than_threshold_cols = [tab for tab, cols in schema.items() if len(cols) > threshold]
+        if not tables_larger_than_threshold_cols:
             return schema, False
 
         logging.warning(
-            f"Database {self.db_id} has tables with more than {pruning_threshold} columns. "
+            f"Database {self.db_id} has tables with more than {threshold} columns. "
             "Truncating the schema before generation ..."
         )
+        large_tables = {}
+        for t in tables_larger_than_threshold_cols:
+            cols = [c for c in schema[t] if t.lower() not in kept.keys() or (t.lower() in kept.keys() and c not in kept[t.lower()])]
+            large_tables[t] = cols
+
         retry = 0
         error = set()
-        parser = get_parser(parser_name="schema_pruning")
-        matched_conditions = matched_conditions or {}
-        matched_keys = matched_keys or {}
+        parser = get_parser(parser_name="schema_pruning_by_selection")
 
         while retry < self.max_retry:
             prompt = get_prompt(
-                template_name="schema_pruning",
-                columns_string=', '.join(matched_conditions.keys()) if matched_conditions else None,
-                keys_string=', '.join([f"{t}.{c}" for t, c in matched_keys.items()]) if matched_keys else None,
+                template_name="schema_pruning_by_selection",
                 error_string='\n'.join(error) if error else None
             )
             response, _ = self.backbone(
@@ -184,14 +186,21 @@ class SchemaPruningMixin:
                 request_kwargs={
                     "HINT": self.hint,
                     "QUESTION": self.nl,
-                    "DATABASE_SCHEMA": json.dumps(schema, indent=4)
+                    "LARGE_TABLES": json.dumps(large_tables, indent=4)
                 }
             )
             try:
                 self._validate_pruned_schema(response)
+                pruned_schema = {}
+                for t, cols in schema.items():
+                    if t not in response.keys():
+                        pruned_schema[t] = schema[t]
+                    else:
+                        pruned_schema[t] = response[t]
+                        if t.lower() in kept.keys(): pruned_schema[t].extend(kept[t.lower()])
                 logging.info(f"Pruned schema: {json.dumps(response, indent=4)}")
                 self.schema_pruned = True
-                return response, True
+                return pruned_schema, True
             except ValidationError as e:
                 error.add(str(e).split('.')[-1])
                 retry += 1
@@ -241,6 +250,32 @@ class SchemaPruningMixin:
             return None
         return getattr(self, "_pruned_db_snapshot_path", None)
 
+    def _get_db_schema(self, threshold):
+        schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
+        kept = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_sql_columns_dict(self.sql)
+        schema_generator = DatabaseSchemaGenerator(
+            tentative_schema=DatabaseSchema.from_schema_dict(schema),
+            db_id=self.db_id,
+            db_path=self.db_path
+        )
+        for k, v in schema_generator.get_all_primary_foreign_keys().items():
+            if k.lower() not in kept.keys(): kept[k.lower()] = v
+            else: kept[k.lower()].extend(v)
+        schema, schema_pruned = self._prune_schema_if_needed(
+            schema=schema,
+            threshold=threshold,
+            kept=kept
+        )
+        if schema_pruned:
+            # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
+            schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
+            self.schema_string = DatabaseManager().get_database_schema_string(
+                tentative_schema=schema,
+                schema_with_examples=None, # type: ignore
+                schema_with_descriptions=schema_with_descriptions,
+                include_value_description=True
+            )
+        return schema, schema_pruned
 
 class TestClass(ABC):
     def __init__(self, name, abbrev_name, abbrev_type, key="nl+sql", use_cache=False):
@@ -252,16 +287,17 @@ class TestClass(ABC):
         self.use_cache=use_cache
         self.test_fn = self._test_fn
 
-    def set(self, nl, hint, sql, db_id, db_root_path, backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0):
+    def set(self, nl, hint, sql, gold, db_id, db_root_path, backbone_llm_model_name="gpt-4o-mini-0708", num=1, criteria=1.0):
         self.nl=nl
         self.hint=hint
         self.sql=sql
+        self.gold=gold
 
         self.db_id=db_id
         self.db_root_path=db_root_path
         self.db_path = os.path.join(self.db_root_path, self.db_id, f"{self.db_id}.sqlite")
         self.schema_string = SchemaCache.get_schema(db_id, self.db_path, db_root_path)
-        
+
         kwargs = {"nl": self.nl if "nl" in self.key else None, "sql": self.sql if "sql" in self.key else None}
         self.instance_saved_path = os.path.join(TEST_INSTANCE_ROOT_PATH, self.abbrev_type, self.abbrev_name, self.db_id, hashing(**kwargs))
         os.makedirs(self.instance_saved_path, exist_ok=True)
@@ -319,4 +355,4 @@ class TestClass(ABC):
         # Verify whether the number of passed test cases meets the criteria
         else: detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
 
-        return np.array(passes), detection_result, self.criteria, logprobs, tokens_used, traces
+        return np.array(passes), detection_result, results, self.criteria, logprobs, tokens_used, traces

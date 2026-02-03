@@ -5,7 +5,7 @@ Your task is to:
 - Identify all tables and columns that could be relevant to answering the question.
 - Prune the schema to retain relevant tables and columns, but you must avoid over-pruning:
     — Rremove only columns/tables that are clearly unnecessary. When in doubt, keep them.
-    - For each kept table, keep 5 columns, if possible. DO NOT PRUNE TOO MUCH!
+    - For each kept table, DO NOT prune out too many columns!
     {% if COLUMNS %}
     - We found some columns may be relavant with the question, put them into your simulation if possible:
     {{COLUMNS}}

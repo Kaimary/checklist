@@ -2,14 +2,14 @@ import os
 import re
 import time
 import json
-import random
 import copy
+import random
+import shutil
 import logging
 import threading
-import shutil
-from collections import deque
 import numpy as np
 from munch import Munch
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from checklist.spinner import Spinner
@@ -18,12 +18,11 @@ from checklist.prompts import get_prompt
 from checklist.red.parser.report import BugLevel
 from checklist.red.parser.red_parser import Query
 from checklist.database_manager import DatabaseManager
-from checklist.base_test_class import SchemaPruningMixin, TestClass, ValidationError
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
+from checklist.base_test_class import SchemaPruningMixin, TestClass, ValidationError
 from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
-from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 from checklist.database_utils.execution import execute_sql, validate_sql_query
-from checklist.database_utils.db_catalog.csv_utils import load_tables_description
+from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
 
 class SemanticCheckTestClass(TestClass):
     def __init__(self):
@@ -111,7 +110,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl")
 
-    def set(self, red_schema, pruning_threshold=20, **kwargs):
+    def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.num=3
         self.criteria=0.6
@@ -119,33 +118,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         self.parallel_workers = self.num
         self.parser = get_parser(parser_name="simulate_db_generation")
         self.parser2 = get_parser(parser_name="oracle_data_generation")
-        self.red_schema = red_schema
-        self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
-        # first check if any valid hard-constrained has to meet in the query (e.g., WHERE country='China')
-        # If exists, prompt LLM to make sure required columns/values existed.
-        self.matched_conditions, self.matched_keys = {}, {}
-        try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
-            self.matched_conditions = parsed_query.check_conditions()
-            self.matched_keys = parsed_query.check_keys()
-        except Exception as e:
-            print(e)
-
-        self.schema, self.schema_pruned = self._prune_schema_if_needed(
-            schema=self.schema,
-            pruning_threshold=pruning_threshold,
-            matched_conditions=self.matched_conditions,
-            matched_keys=self.matched_keys
-        )
-            
-        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=self.schema,
-            schema_with_examples=None, # type: ignore
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
+        self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string)
         start = time.time()
         self.test_cases = self._generator()
@@ -156,11 +129,11 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
             if isinstance(value, bool):
                 return value
             if isinstance(value, (int, float)):
-                return float(value)
+                return round(float(value), 2)
             if isinstance(value, str):
                 stripped = value.strip()
                 try:
-                    return float(stripped)
+                    return round(float(stripped), 2)
                 except ValueError:
                     return value
             return value
@@ -194,8 +167,10 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                 if oracle_row[i:i+n] == pred:
                     return True
             return False
-        if preds is None or oracles is None: return False
-        if len(preds) != len(oracles): return False
+        if preds is None: return False
+        # Marked as `true` judgment if empty result happens, cuz most probably the simulated database made something wrong...
+        if not preds or not oracles: return True
+        if len(set(preds)) != len([tuple(x) for x in oracles]): return False
 
         preds_frozen = [__freeze(p) for p in preds]
         oracle_frozen = [__freeze(o) for o in oracles]
@@ -550,36 +525,14 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Noise Row Injection Test Class", "metamorphic_noise", "metamorphic")
 
-    def set(self, red_schema, pruning_threshold=20, **kwargs):
+    def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
-        self.red_schema = red_schema
         self.criteria=0.6
         self.num=3
         self.max_retry=self.num
         self.parallel_workers = self.num
         self.parser = get_parser(parser_name="noise_data_injection")
-        self.schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
-        matched_conditions, matched_keys = {}, {}
-        try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
-            matched_conditions = parsed_query.check_conditions()
-            matched_keys = parsed_query.check_keys()
-        except Exception as e:
-            print(e)
-        self.schema, self.schema_pruned = self._prune_schema_if_needed(
-            schema=self.schema,
-            pruning_threshold=pruning_threshold,
-            matched_conditions=matched_conditions,
-            matched_keys=matched_keys
-        )
-        # schema_with_examples = load_schema_with_examples(_get_unique_values(self.db_path))
-        schema_with_descriptions = load_tables_description(self.db_path, use_value_description = True)
-        self.schema_string = DatabaseManager().get_database_schema_string(
-            tentative_schema=self.schema,
-            schema_with_examples=None, # type: ignore
-            schema_with_descriptions=schema_with_descriptions,
-            include_value_description=True
-        )
+        self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string, copy_existing_rows=True)
         self.test_cases = self._generator()
 
@@ -864,18 +817,19 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
                 fut.cancel()
 
         return outputs
-    
-class CrossModelTestClass(TestClass):
+
+class CrossModelTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Majority Voting Test Class", "majority_vote", "differential")
         
-    def set(self, **kwargs):
+    def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.num=3
         self.active_model_num = 3
         model_list=(["resdsql", "codes15b", "dailsql", "llm:gpt-5.1"] if "spider" in self.db_root_path else \
                      ["chess", "cscsql32b", "omnisql32b", "llm:gpt-5.1"])
         self.model_pool = self._create_nl2sql_model_pool(model_list)
+        self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self.test_cases = self._generator()
 
     def _create_nl2sql_model_pool(self, model_list):
@@ -1017,13 +971,14 @@ class CrossModelTestClass(TestClass):
                 spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return outputs
 
-class QueryReviewTestClass(TestClass):
+class QueryReviewTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Step-through Query Review Test Class", "query_review", "explore")
 
-    def set(self, red_schema, **kwargs):
+    def set(self, red_schema, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
-        self.schema = red_schema
+        self.red_schema = red_schema
+        self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self.parser = get_parser(parser_name="query_rubber_duck_debugging")
         self.prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
         self.test_cases = self._generator()
@@ -1081,7 +1036,7 @@ class QueryReviewTestClass(TestClass):
         # Obtain query clauses for next debugging purpose
         subsql_context = ""
         try:
-            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+            parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
             subsqls = _build_sub_sqls(parsed_query)
             subsql_context = _format_sub_sqls_with_results(subsqls)
         except Exception as e:
@@ -1113,15 +1068,17 @@ class QueryReviewTestClass(TestClass):
 
         return outputs
 
-class NLReviewTestClass(TestClass):
+class NLReviewTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore")
 
-    def set(self, **kwargs):
+    def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.num = 3
+        self.criteria = 0.6
         self.max_retry = self.num
         self.parallel_workers = self.num
+        self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self.prompt = get_prompt(template_name="nl_paraphrase_generation", schema_string=self.schema_string)
         self.prompt2 = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
         self.parser = get_parser(parser_name="nl_paraphrase_generation")
@@ -1274,158 +1231,3 @@ class NLReviewTestClass(TestClass):
 
         return outputs
 
-class SelfConsistencyTestClass(TestClass):
-    def __init__(self):
-        super().__init__("Query Consistency Test Class", "query_consistency", "differential")
-    
-    def set(self, **kwargs):
-        super().set(**kwargs)
-        self.num=3
-        self.max_retry = 3
-        self.criteria=0.6
-        self.cnt = 0
-        self.nl_mutants = None
-        self.nl_mutants_sql_outputs = None
-        self.nl_mutants_saved_path = "spider_dev_nl_mutants.json"
-        self.nl_mutants_sql_outputs_path = "codes_pred_nl_mutants.sql"
-        # NOTICE!!! 
-        # this test pre-checks whether there are predicted SQL outputs; 
-        # If exists, will do the test; Otherwise, generate nl mutants and do fake testing.
-        if os.path.exists(self.nl_mutants_sql_outputs_path):
-            print(f"Predicted SQL outputs detected (`{self.nl_mutants_sql_outputs_path}`), ensure that you're aware of the behavior of using them...")
-            with open(self.nl_mutants_saved_path) as f:
-                self.nl_mutants = json.load(f)
-            assert len(self.nl_mutants) % self.num == 0, f"The number of NL mutants ({len(self.nl_mutants)}) should be a multiple of the number of test cases ({self.num})"
-            lines = open(self.nl_mutants_sql_outputs_path).readlines()
-            self.nl_mutants_sql_outputs = lines[:self.num]
-            with open(self.nl_mutants_sql_outputs_path, "w") as f:
-                f.writelines(lines[self.num:])
-        self.test_cases = self._generator()
-
-    def _compare_query_results(self, pred, target):
-        if pred and target and set(target) == set(pred):
-            return True
-        return False
-    
-    def _test_fn(self, ret: Munch):
-        ret.results = Munch()
-        ret.results.pred = None if validate_sql_query(self.db_path, ret.test_fixtures.predict_sql)["STATUS"] != "OK" \
-            else execute_sql(self.db_path, ret.test_fixtures.predict_sql)
-        ret.results.target = None if validate_sql_query(self.db_path, self.sql)["STATUS"] != "OK" \
-            else execute_sql(self.db_path, self.sql)
-        ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used
-    
-    def _validate_test_fixture(self, response, history):
-        def __output_format_check(response):
-            if not isinstance(response, dict):
-                raise ValidationError(
-                    f"Output format(type) check failed. "
-                    f"response type: {type(response)}, "
-                    f"Expected type: dict"
-                )
-            if ("NL" not in response.keys() and "nl" not in response.keys()) and ("SQL" not in response.keys() and 'sql' not in response.keys()): 
-                raise ValidationError(
-                    f"Output format(key) check failed. "
-                    f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `nl` or `sql`"
-                )
-            # normalize key name
-            if "NL" in response.keys(): response["nl"] = response.pop("NL")
-            if "SQL" in response.keys(): response["sql"] = response.pop("SQL")
-            return True
-        def __response_history_compatible_check(response, history):
-            if any(h.nl_mutant == response["nl"] for h in history):
-                raise ValidationError(f"Duplicate response (nl mutant) detected.")
-            return True
-        def __sql_executable_check(response, db_path):
-            res = validate_sql_query(db_path, response["sql"])
-            if res["STATUS"] != "OK":
-                raise ValidationError(
-                        f"SQL executable check failed. "
-                        f"Fail log from DBMS: {res['RESULT']}"
-                    )
-            return True
-        __output_format_check(response)
-        if "sql" in response.keys(): __sql_executable_check(response, self.db_path)
-        else: __response_history_compatible_check(response, history)
-        return True
-    
-    def _form_instance(self, idx, ret):
-        TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
-        os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
-        
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-            nl=self.nl,
-            sql=self.sql, 
-            nl_mutant=ret.test_fixtures.nl_mutant,
-            predict_sql=ret.test_fixtures.predict_sql)
-        
-        return ret
-    
-    def _generator(self, verbose=True):
-        def __history_to_string(history):
-            return "\n".join(
-                f"--- Example {i+1} ---\n"
-                f"nl mutation: {h.nl_mutant}\n\n"
-                for i, h in enumerate(history)
-            )
-        
-        parser = get_parser(parser_name="nl_mutation_generation")
-        history, outputs = [], []
-        retry = 0
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while len(outputs) < self.num and retry < self.max_retry:
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                tokens = 0
-                # Generate nl mutants and using the original sql as fake prediction
-                if not self.nl_mutants:
-                    prompt = get_prompt(
-                        template_name="nl_mutation_generation",
-                        history_string=__history_to_string(history) if history else None
-                    )
-                    response, metadata = self.backbone(prompt, parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl})
-                    tokens += metadata.get("token_used", 0)
-                    try:
-                        self._validate_test_fixture(response, history)# if any(nl_mutant == h.nl_mutant for h in history):
-                    except ValidationError as e:
-                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                        retry += 1
-                        continue
-                    # Temporarily save the generated NL mutants for future model ensemble use
-                    data_to_add = [{"db_id": self.db_id, "question": response["nl"], "query": self.sql}]
-                    if os.path.exists(self.nl_mutants_saved_path):
-                        with open(self.nl_mutants_saved_path) as f:
-                            try:
-                                data = json.load(f)
-                            except json.JSONDecodeError:
-                                data = []
-                    else:
-                        data = []
-                    data.extend(data_to_add)
-                    with open(self.nl_mutants_saved_path, "w") as f: json.dump(data, f, indent=4)
-                    response2 = {"sql": self.sql} # fake prediction
-                    try:
-                        self._validate_test_fixture(response2, history)
-                    except ValidationError as e:
-                        logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                        if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")    
-                        retry += 1
-                        continue
-                else:
-                    response = {"nl": self.nl_mutants[self.cnt]["question"]}
-                    response2 = {"sql": self.nl_mutants_sql_outputs[self.cnt]}
-                    self.cnt += 1
-                ret.token_used = tokens
-                ret.logprob = metadata.get("logprob", None)
-                ret.test_fixtures.nl_mutant = response["nl"]
-                ret.test_fixtures.predict_sql = response2["sql"]
-                history.append(ret.test_fixtures)
-                outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
-        return outputs

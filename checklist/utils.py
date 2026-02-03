@@ -11,7 +11,7 @@ from evaluation.bird_evaluation.evaluation import execute_model
 from checklist.red.parser.schema import Schema
 from checklist.database_utils.db_info import get_db_schema_from_json
 from checklist.test_classes import CrossModelTestClass, NLReviewTestClass, NoiseRowTestClass, \
-    OracleResultTestClass, QueryReviewTestClass, SelfConsistencyTestClass, SemanticCheckTestClass
+    OracleResultTestClass, QueryReviewTestClass, SemanticCheckTestClass
 
 DEFAULT_BACKBONE_MODEL_NAME = "gpt-4o-mini-0708"
 TEST_CLASS_MAP = {
@@ -19,10 +19,11 @@ TEST_CLASS_MAP = {
     "orc": OracleResultTestClass,
     "nos": NoiseRowTestClass,
     "crs": CrossModelTestClass,
-    "slf": SelfConsistencyTestClass,
     "qry": QueryReviewTestClass,
-    "nlr": NLReviewTestClass
+    "nlr": NLReviewTestClass,
 }
+    # "test": TestingTestClass,
+    # "slf": SelfConsistencyTestClass,
     # "syn": MinimumSyntaxTestClass,
     # "lax": NLRelaxTestClass,
     # "stn": NLStrengthenTestClass,
@@ -49,6 +50,7 @@ def get_data_from_bench(ex, idx, bench_name, predicted_sql_path, db_root_path):
     elif "nl2sql-bugs" in bench_name:
         hint = ex['evidence']
         pred = ex['sql']
+        gold = ex.get('gold_sql', None)
         judgment_gold_label = ex['label']
     
     return db_id, db_path, nl, hint, pred, gold, judgment_gold_label
@@ -69,7 +71,7 @@ def createJudge(judge_name, enable_few_shots=False, enable_cot=False):
     
     return judge
 
-def print_summary(judge, ret, idx, judgment_gold_label, output_file_name, output_file_dir):
+def print_summary(judge, ret, munch, idx, judgment_gold_label, output_file_name, output_file_dir):
     if not isinstance(judge, GuardianJudge): return
     if ret['final_judgment'] == "UNDETERMINED": return
 
@@ -82,7 +84,7 @@ def print_summary(judge, ret, idx, judgment_gold_label, output_file_name, output
         lines = open(baseline_output_file_path).readlines()
         judgment_baseline_label = json.loads(lines[idx])["final_judgment"]
     
-    judge.summary(ret, judgment_baseline_label, judgment_gold_label)
+    judge.summary(ret, munch, judgment_baseline_label, judgment_gold_label)
 
 def build_red_schemas(
     data,

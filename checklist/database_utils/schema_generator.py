@@ -1,10 +1,11 @@
 import re
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, TypedDict
 
 from .execution import execute_sql
 from .db_info import get_db_schema
 from .schema import DatabaseSchema, get_primary_keys
+
 
 class DatabaseSchemaGenerator:
     """
@@ -220,6 +221,22 @@ class DatabaseSchemaGenerator:
                 if self._is_connection(table_name, column_name):
                     connections[table_name].append(column_name)
         return connections
+
+    def get_all_primary_foreign_keys(self) -> Dict[str, List[str]]:
+        """
+        Retrieves the primary and foreign key information for every table in the current schema selection.
+        
+        Returns:
+            Dict[str, TableKeysInfo]: A mapping of table names to their primary keys and foreign keys.
+        """
+        keys_info: Dict[str, List[str]] = {}
+        for table_name, table_schema in self.schema_structure.tables.items():
+            keys_info[table_name] = get_primary_keys(table_schema) or []
+            for column_name, column_info in table_schema.columns.items():
+                if column_info.foreign_keys:
+                    keys_info[table_name].append(column_name)
+      
+        return keys_info
     
     def get_schema_with_connections(self) -> Dict[str, List[str]]:
         """

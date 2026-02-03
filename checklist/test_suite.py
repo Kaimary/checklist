@@ -16,7 +16,7 @@ class TestSuite:
         self.print_fn = print_fn
         self.test_ranges = {}
 
-    def set(self, backbone, nl, hint, sql, db_id, db_root_path, red_schema):
+    def set(self, backbone, nl, hint, sql, gold, db_id, db_root_path, red_schema):
         for t in self.tests.values():
             sig = inspect.signature(t.set)
             kwargs = dict(
@@ -24,6 +24,7 @@ class TestSuite:
                 nl=nl,
                 hint=hint,
                 sql=sql,
+                gold=gold,
                 db_id=db_id,
                 db_root_path=db_root_path,
             )
@@ -292,7 +293,7 @@ class TestSuite:
         judgments = []
         for name, t in self.tests.items():
             if verbose: print(f'Running {name}')
-            passed, judgment, criteria, logprobs, tokens_used, traces = t.run()
+            passed, judgment, munch, criteria, logprobs, tokens_used, traces = t.run()
             if isinstance(judgment, bool): judgments.append(judgment)
             ret[name] = {
                 "judgment": judgment,
@@ -305,7 +306,7 @@ class TestSuite:
                 "traces": traces
             }
         ret["final_judgment"] = any(judgments) if judgments else "UNDETERMINED"
-        return ret
+        return ret, munch
             
     def summary(self, types=None, capabilities=None, **kwargs):
         """Print stats and example failures for each test.
@@ -347,7 +348,7 @@ class TestSuite:
             print()
             print()
 
-    def summary1(self, ret, baseline_judgment=None, gold=None):
+    def summary1(self, ret, munch, baseline_judgment=None, gold=None):
         """Print stats for each test comparing with baseline/gold judgments.
 
         Parameters
@@ -359,6 +360,7 @@ class TestSuite:
         for k, v in ret.items():
             if k == "final_judgment": continue
             test_judgment = v['judgment']
+            results = v['results']
             if test_judgment is None: 
                 print(f"\033[94m\n{k}: [Skip]\033[0m")
                 continue
@@ -367,6 +369,8 @@ class TestSuite:
             baseline_evaluation = baseline_judgment == gold
             if not test_evaluation:
                 print(f"\033[94m\n{k}:\033[0m Judgment ({test_judgment})\n\033[92mCorrectness? ❌\033[0m")
+                if gold and not test_judgment: #FN
+                    print(f"\033[94m\n{k}:\033[0m Results: {results}\n\033[92mPreds: {munch.pred}\n\033[92mTarget: {munch.target}\033[0m")
             if baseline_evaluation and not test_evaluation:
                 print(f"\033[92mBeat Baseline? ❌\033[0m")
                 print(f"\033[92m[info] \033[0mTotal Test Cases: {v['total']}, Passed: {v['passed']}, Criteria: {v['criteria']}")

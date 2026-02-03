@@ -147,7 +147,7 @@ class MetamorphicNoiseOutput(BaseModel):
 
 class SchemaPruningParser(BaseModel):
     """Model for schema pruning output."""
-    pruned_schema: str = Field(description="The pruned database schema with only the necessary tables and columns.")
+    pruned_schema: Dict[str, Any] = Field(description="The pruned database schema with only the necessary tables and columns.")
 
 class LLMCoTJudgmentOutput(BaseModel):
     """Model for LLM judgment output."""
@@ -206,6 +206,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
         "query_rubber_duck_debugging": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "llm_cot_nl2sql_judgment": lambda: JsonOutputParser(pydantic_object=LLMCoTJudgmentOutput),
         "schema_pruning": lambda: JsonOutputParser(pydantic_object=SchemaPruningParser),
+        "schema_pruning_by_selection": lambda: JsonOutputParser(pydantic_object=SchemaPruningParser),
     }
 
     if parser_name not in parser_configs:

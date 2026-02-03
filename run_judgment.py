@@ -76,11 +76,11 @@ if __name__ == '__main__':
         if gold: print(f"\033[94mGold: \033[91m{gold}\033[0m")
 
         start=time.time()
-        judge.set(nl, hint, pred, db_id, db_root_path=args.db_root_path, red_schema=red_schemas[db_id])
+        judge.set(nl, hint, pred, gold, db_id, db_root_path=args.db_root_path, red_schema=red_schemas[db_id])
         # run the judge
-        ret = judge.run()
+        ret, munch = judge.run()
         # print out judgment summary if not beat baseline/ground-truth
-        print_summary(judge, ret, idx+start_idx, judgment_gold_label, output_file_name, output_file_dir)
+        print_summary(judge, ret, munch, idx+start_idx, judgment_gold_label, output_file_name, output_file_dir)
         # update output
         json.dump(ret, judgments)
         judgments.write('\n')
