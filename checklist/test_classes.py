@@ -1027,10 +1027,9 @@ class QueryReviewTestClass(SchemaPruningMixin, TestClass):
         def _format_sub_sqls_with_results(sub_sqls):
             output = ""
             for idx, sub_sql in enumerate(sub_sqls, 1):
-                exec_summary = validate_sql_query(self.db_path, sub_sql, max_returned_rows=10)
-                preview = exec_summary.get("RESULT")
-                if isinstance(preview, list) and len(preview) > 5: preview = preview[:5]
-                output += f"SUBSQL-{idx}: {sub_sql}\nEXECUTION: {exec_summary.get('STATUS', 'unknown')}\nRESULT PREVIEW: {preview}\n"
+                exec = validate_sql_query(self.db_path, sub_sql, max_returned_rows=5)
+                preview = exec.get("RESULT")
+                output += f"SUBSQL-{idx}: {sub_sql}\nEXECUTION: {exec.get('STATUS', 'unknown')}\nRESULT PREVIEW: {preview}\n"
             return output
 
         # Obtain query clauses for next debugging purpose
@@ -1155,12 +1154,16 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
                 try:
                     ret = Munch()
                     ret.test_fixtures = Munch()
-                    preview = paraphrase.replace("\n", " ")[:32]
-                    trace = f"->>Parallel Test Case [{preview}] Tracelog<<-\n"
+                    trace = f"->>Parallel Test Case Tracelog<<-\n"
                     response, metadata = self.backbone(
                         self.prompt2,
                         self.parser2,
-                        request_kwargs={"HINT": self.hint, "QUESTION": paraphrase, "SQL": self.sql},
+                        request_kwargs={
+                            "HINT": self.hint, 
+                            "QUESTION": paraphrase, 
+                            "SQL": self.sql,
+                            "RESULT": '\n'.join(f'{tup}' for tup in preview) \
+                                if isinstance(preview, list) else preview},
                     )
                     trace += (
                         f"{response['chain_of_thought_reasoning']} -> "
@@ -1181,6 +1184,8 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
             raise RuntimeError("NL review paraphrase generation failed without exception.")
 
         paraphrases = _prepare_paraphrases()
+        exec = validate_sql_query(self.db_path, self.sql, max_returned_rows=5)
+        preview = exec.get("RESULT")
         outputs = []
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
