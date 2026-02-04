@@ -1334,17 +1334,6 @@ class FromClause(Clause):
         # end=time.time()
         # print(f"FROM clause parse {end - start:.2f} seconds.")
         return
-
-    def check(self, kept_cols):
-        for cond in self.join_conds:
-            for predicate in cond.ops:
-                if isinstance(predicate, str): continue
-                if predicate._cmp == "=":
-                    op1 = predicate.ops[0]
-                    op2 = predicate.ops[1]
-                    if isinstance(op1, Column): kept_cols[op1.tab.tab_name].append(op1.col_name)
-                    if isinstance(op2, Column): kept_cols[op2.tab.tab_name].append(op2.col_name)
-        return kept_cols
     
     def validate(self):
         res = []
@@ -1439,31 +1428,6 @@ class WhereClause(Clause):
         res = []
         res.extend(self.predicates.validate())
         return res
-    
-    def check(self):
-        matched_values = defaultdict(list)
-        for predicate in self.predicates.ops:
-            if isinstance(predicate, str): continue
-            if predicate._cmp == "=":
-                op1 = predicate.ops[0]
-                op2 = predicate.ops[1]
-                if (
-                    isinstance(op1, Column)
-                    and isinstance(op2, str)
-                    and predicate.cmp_type(op1) == "TEXT"
-                    and op1.values
-                ):
-                    if op2.strip("'").strip('"') in op1.values:
-                        matched_values[op1.tab.tab_name].append(op1.col_name)
-                elif (
-                    isinstance(op2, Column)
-                    and isinstance(op1, str)
-                    and predicate.cmp_type(op2) == "TEXT"
-                    and op2.values
-                ):
-                    if op1.strip("'").strip('"') in op2.values:
-                        matched_values[op2.tab.tab_name].append(op2.col_name)
-        return matched_values
 
 
 class GroupbyClause(Clause):
@@ -1950,12 +1914,6 @@ class Query:
                                 res.append(Report(BugLevel.INFO, self.sql, desc))
 
         return res
-
-    def check_conditions(self, clause="WHERE"):
-        return self.clauses[clause].check() if clause in self.clauses else {}
-
-    def check_keys(self, kept_cols, clause="FROM"):
-        return self.clauses[clause].check(kept_cols) if clause in self.clauses else {}
     
     def get_used_schema(self):
         tables = set()

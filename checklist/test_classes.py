@@ -22,7 +22,7 @@ from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.base_test_class import SchemaPruningMixin, TestClass, ValidationError
 from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
 from checklist.database_utils.execution import execute_sql, validate_sql_query
-from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table
+from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table, sqlite_type_map
 
 class SemanticCheckTestClass(TestClass):
     def __init__(self):
@@ -110,7 +110,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
         super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl")
 
-    def set(self, pruning_threshold=20, **kwargs):
+    def set(self, red_schema, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.num=3
         self.criteria=0.6
@@ -120,9 +120,14 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         self.parser2 = get_parser(parser_name="oracle_data_generation")
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string)
-        start = time.time()
+        self.matched_conditions, self.matched_keys = {}, {}
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(red_schema))
+            self.matched_conditions = parsed_query.check_conditions()
+        except Exception as e:
+            print(e)
         self.test_cases = self._generator()
-        logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
+        # logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
 
     def _compare_query_results(self, preds, oracles):
         def __normalize_scalar(value):
@@ -189,34 +194,25 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         # the simulated database can't execute the sql propertly, most probably the simulation missing some pk/fk-like columns
         # to ensure good performance, set a special tag in the ret to make final detection as "UNDETERMINED"
         if ret.results.pred is None: ret.results.orc_tag = True
-        ret.results.target = ret.test_fixtures.label_result["rows"] if "rows" in ret.test_fixtures.label_result.keys() else []
+        ret.results.target = ret.test_fixtures.oracle["rows"] if "rows" in ret.test_fixtures.oracle.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
 
-    def _validate_test_fixture(self, response, history, key="database_instances", instances=None):
-        def __output_format_check(response, key):
+    def _validate_test_fixture(self, response):
+        def __output_format_check(response):
             if not isinstance(response, dict):
                 raise ValidationError(
                     f"Output format(type) check failed. "
                     f"response type: {type(response)}, "
                     f"Expected type: dict"
                 )
-            # quick fix (hard-code) before checking
-            if "columns" in response.keys() and "rows" in response.keys(): response = {"resulting_data": response}
-            if key == "resulting_data": response["database_instances"] = instances
-            if key not in response.keys():
+            if 'data' not in response.keys():
                 raise ValidationError(
                     f"Output format(key) check failed. "
                     f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `{key}`"
-                )
-            if key == "resulting_data" and any(k not in response["resulting_data"].keys() for k in ["columns", "rows"]): 
-                raise ValidationError(
-                    f"Output format(key in key) check failed. "
-                    f"Keys found in `resulting_data`: {','.join(response['resulting_data'].keys())}, "
-                    f"Expected keys: `columns` and `rows`"
+                    f"Expected keys: `data`"
                 )
             return True
         def __extract_column_types_from_schema_string(schema_string):
@@ -242,15 +238,19 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                         types.append(match.group(1).upper())
                 res[table_name] = types
             return res
-        def __schema_data_alignment_check(response, tables, column_types, schema):
-            def __normalize_sqlite_type(tp: str) -> str:
-                """Normalize SQLite type (case-insensitive, strip length, etc.)."""
-                tp = tp.upper().strip()
-                # Remove size qualifiers, e.g., VARCHAR(20) -> VARCHAR
-                tp = re.sub(r'\s*\(.*\)', '', tp)
-                return tp
+        def __normalize_sqlite_type(tp: str) -> str:
+            """Normalize SQLite type (case-insensitive, strip length, etc.)."""
+            tp = tp.upper().strip()
+            # Remove size qualifiers, e.g., VARCHAR(20) -> VARCHAR
+            tp = re.sub(r'\s*\(.*\)', '', tp)
+            return tp          
+        def __schema_data_alignment_check(response):
+            tables = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
+            col_types= DatabaseManager().get_all_column_types() if not self.schema_pruned \
+                else __extract_column_types_from_schema_string(self.schema_string)
+            
             # table name validity check
-            tables_in_data = response["database_instances"].keys()
+            tables_in_data = response["data"].keys()
             for td in tables_in_data:
                 if td not in tables:
                     raise ValidationError(
@@ -259,30 +259,15 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                         f"Existing table names: {','.join(tables)}"
                     )
             # column count and data types consistent check
-            sqlite_type_map = {
-                'INT': int,
-                'INTEGER': int,
-                'REAL': float,
-                'TEXT': str,
-                'BLOB': bytes,
-                'NUMERIC': float,
-                'DATE': str,
-                'DATETIME': str,
-                'bool': bool,
-                "VARCHAR": str
-            }
-            data = response["database_instances"]
-            for t, rows in data.items():
+            for t, rows in response["data"].items():
                 if not rows: continue
-                if len(column_types[t]) != len(rows[0]):
+                if len(col_types[t]) != len(rows[0]):
                     raise ValidationError(
                         f"Schema-data column count mismatch. "
                         f"Column count in data row: {len(rows[0])}(e.g., {rows[0]}), "
-                        f"Expected column count of table {t}: {len(column_types[t])}({','.join(schema[t])})"
+                        f"Expected column count of table {t}: {len(col_types[t])}({','.join(self.schema[t])})"
                     )
-                
-                for v, tp in zip(rows[0], column_types[t]):
-                    # print(tp)
+                for v, tp in zip(rows[0], col_types[t]):
                     normalized = __normalize_sqlite_type(tp)
                     expected_type = sqlite_type_map.get(normalized, str)
                     try:
@@ -294,6 +279,42 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                             f"Column type Data: {v} "
                             f"Expected column type: {expected_type}"
                         )
+            return True
+        # output format check
+        __output_format_check(response)
+        # schema-data alignment check
+        __schema_data_alignment_check(response)
+
+    def _validate_test_fixture2(self, response, history):
+        def __output_format_check(response):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
+            if 'result' not in response.keys():
+                raise ValidationError(
+                    f"Output format(key) check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `result`"
+                )
+            if not isinstance(response["result"], dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"`result` type: {type(response['result'])}, "
+                    f"Expected type: dict"
+                )
+            # quick fix format issues frequently observed
+            if "columns" in response["result"].keys() and "rows" in response.keys(): response = {"result": response}
+            if any(k not in response["result"].keys() for k in ["columns", "rows"]): 
+                raise ValidationError(
+                    f"Output format(key in key) check failed. "
+                    f"Keys found in `result`: {','.join(response['result'].keys())}, "
+                    f"Expected keys: `columns` and `rows`"
+                )
+            if isinstance(response["result"]["rows"], list) and not isinstance(response["result"]["rows"][0], list):
+                response["result"]["rows"] = [response["result"]["rows"]]
             return True
         def __response_history_compatible_check(response, history):
             def __dicts_equal___(d1, d2):
@@ -313,43 +334,36 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                 return True
             
             for h in history:
-                if not __dicts_equal___(response["database_instances"], h["data"]): continue
+                if not __dicts_equal___(response["data"], h["data"]): continue
                 # Check whether result is the same or not if test cases are same. If it is the case, drop it
-                if __dicts_equal___(response["resulting_data"], h["label_result"]): 
-                    raise ValidationError("Duplicate(`database_instances`+`resulting_data`) test case.")
-                # Otherwise, double check which `result` is the correct one
-                retry = 0
-                prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
-                parser = get_parser(parser_name="oracle_result_checking")
-                while True and retry < self.max_retry:
-                    response2, _ = self.backbone(prompt, parser, request_kwargs={
-                        "HINT": self.hint,
-                        "QUESTION": self.nl,
-                        "INSTANCES": json.dumps(h['data'], indent=4),
-                        "RESULT1": json.dumps(h['label_result'], indent=4),
-                        "RESULT2": json.dumps(response["resulting_data"], indent=4)
-                    })
-                    if isinstance(response2, dict):
-                        if "resulting_data" in response2.keys(): break
-                        if "columns" in response2.keys() and "rows" in response2.keys():
-                            response2 = {"resulting_data": response2}
-                            break
-                # Modify the `result` according to the output (TODO further check its correctness?)
-                h['label_result'] = response2["resulting_data"]
+                # if __dicts_equal___(response["result"], h["oracle"]): 
+                raise ValidationError("Duplicate(`data`+`result`) test case.")
+                # # Otherwise, double check which `result` is the correct one
+                # retry = 0
+                # prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
+                # parser = get_parser(parser_name="oracle_result_checking")
+                # while True and retry < self.max_retry:
+                #     response2, _ = self.backbone(prompt, parser, request_kwargs={
+                #         "HINT": self.hint,
+                #         "QUESTION": self.nl,
+                #         "INSTANCES": json.dumps(h['data'], indent=4),
+                #         "RESULT1": json.dumps(h['oracle'], indent=4),
+                #         "RESULT2": json.dumps(response["result"], indent=4)
+                #     })
+                #     if isinstance(response2, dict):
+                #         if "result" in response2.keys(): break
+                #         if "columns" in response2.keys() and "rows" in response2.keys():
+                #             response2 = {"result": response2}
+                #             break
+                # # Modify the `result` according to the output (TODO further check its correctness?)
+                # h['oracle'] = response2["result"]
             return True
         
         # output format check
-        __output_format_check(response, key)
-        # __resulting_schema_check(response, self.schema if self.schema_pruned else DatabaseManager().get_db_schema())
-        # schema-data alignment check
-        if key == "database_instances":
-            table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
-            column_types= DatabaseManager().get_all_column_types() \
-                if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
-            __schema_data_alignment_check(response, table_names, column_types, self.schema)
+        __output_format_check(response)
         # response duplication check
-        else: __response_history_compatible_check(response, history)
-       
+        __response_history_compatible_check(response, history)
+
     def _form_instance(self, idx, ret):
         """
         Form each single test case, and save related test fixture for serialization. 
@@ -377,7 +391,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         for t, rows in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
         # # test case serialization
         # self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-        #     database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.label_result)
+        #     database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.oracle)
         
         return ret
 
@@ -385,18 +399,20 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         def __history_to_string(history):
             return "\n".join(
                 f"--- Example {i+1} ---\n"
-                f"database_instances: {json.dumps(h['data'], indent=4)}\n\n"
+                f"data: {json.dumps(h['data'], indent=4)}\n\n"
                 for i, h in enumerate(history)
             )
-        def __values_to_string(col2vals):
+        def __values_to_string(vals):
             return "\n".join(
-                f"Column `{col}`: {', '.join(vals)};"
-                for col, vals in col2vals.items()
+                f"Column `{t}.{c}`: {', '.join(v)};"
+                for t, c2vals in vals.items()
+                for c, v in c2vals.items()
             )
 
         history, outputs = [], []
         retry = 0
         spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        cond_literals = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_sql_condition_literals(self.sql)
         state_lock = threading.Lock()
 
         def _generate_candidate(history_string):
@@ -407,7 +423,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
             prompt = get_prompt(
                 template_name="simulate_db_generation",
                 schema_string=self.schema_string,
-                columns_values_string=__values_to_string(self.matched_conditions) if self.matched_conditions else None,
+                columns_values_string=__values_to_string(cond_literals) if cond_literals else None,
                 history_string=history_string
             )
             # start = time.time()
@@ -419,7 +435,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
             metadata = metadata or {}
             tokens += metadata.get("token_used", 0)
             logprob += metadata.get("logprob", None)
-            trace += f"[simulated DB]: {response.get('database_instances', '')}"
+            trace += f"[simulated DB]: {response.get('data', '')}"
             # logging.info(f"simulate_db_generation took {time.time() - start:.2f} seconds.")
 
             prompt2 = get_prompt(template_name="oracle_data_generation", schema_string=self.schema_string)
@@ -429,7 +445,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                 request_kwargs={
                     "QUESTION": self.nl,
                     "HINT": self.hint,
-                    "DATABASE_INSTANCES": json.dumps(response.get("database_instances", {}), indent=4)
+                    "DATABASE_INSTANCES": json.dumps(response.get("data", {}), indent=4)
                 }
             )
             metadata2 = metadata2 or {}
@@ -437,10 +453,10 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
             logprob += metadata2.get("logprob", None)
             ret.logprob = logprob*0.5
             ret.token_used = tokens
-            trace += f"[oracle data]: {response2.get('resulting_data', '')}"
+            trace += f"[oracle data]: {response2.get('result', '')}"
             ret.trace = trace
-            ret.test_fixtures.data = response.get("database_instances", {})
-            ret.test_fixtures.label_result = response2.get("resulting_data", {})
+            ret.test_fixtures.data = response.get("data", {})
+            ret.test_fixtures.oracle = response2.get("result", {})
             
             return response, response2, ret
 
@@ -478,13 +494,9 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                     appended_to_history = False
                     try:
                         with state_lock:
-                            self._validate_test_fixture(response, history)
-                            self._validate_test_fixture(
-                                response2,
-                                history,
-                                key="resulting_data",
-                                instances=response.get("database_instances")
-                            )
+                            self._validate_test_fixture(response)
+                            response2["data"] = response.get("data") # append data instances into response2 for history duplicate validation 
+                            self._validate_test_fixture2(response2, history)
                             history.append(ret.test_fixtures)
                             appended_to_history = True
                             outputs.append(self._form_instance(len(outputs), ret))
@@ -1235,4 +1247,3 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
                 fut.cancel()
 
         return outputs
-

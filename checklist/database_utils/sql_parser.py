@@ -150,7 +150,7 @@ def _check_value_exists(db_path: str, table_name: str, column_name: str, value: 
     Returns:
         Optional[str]: The value if it exists, otherwise None.
     """
-    query = f"SELECT {column_name} FROM {table_name} WHERE {column_name} LIKE '%{value}%' LIMIT 1"
+    query = f"SELECT `{column_name}` FROM {table_name} WHERE `{column_name}` LIKE '%{value}%' LIMIT 1"
     result = execute_sql(db_path, query, "one")
     return result[0] if result else None
 
@@ -161,7 +161,7 @@ def get_sql_condition_literals(db_path: str, sql: str) -> Dict[str, Dict[str, Li
     Args:
         db_path (str): Path to the database file.
         sql (str): The SQL query string.
-        
+
     Returns:
         Dict[str, Dict[str, List[str]]]: Dictionary of tables and their columns with condition literals.
     """

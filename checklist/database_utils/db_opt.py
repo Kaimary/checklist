@@ -35,6 +35,19 @@ sqlite_reserved_keywords = [
     "WITH", "WITHOUT"
 ]
 
+sqlite_type_map = {
+    'INT': int,
+    'INTEGER': int,
+    'REAL': float,
+    'TEXT': str,
+    'BLOB': bytes,
+    'NUMERIC': float,
+    'DATE': str,
+    'DATETIME': str,
+    'bool': bool,
+    "VARCHAR": str
+}
+
 def duplicate_sqlite_database(src_db_path, dest_db_path, reset=True):
     # 删除旧文件
     if os.path.exists(dest_db_path):

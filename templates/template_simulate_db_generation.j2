@@ -5,10 +5,6 @@ Your task is to:
 - Read and understand the schema and the NL question.
 - Simulate a minimum database (with data instances) that derives from the schema. If any table does not use in the query, skip it.
 - Ensure the types of the simulated data instances align with the ones defined in the given schema.
-{% if VALUES %}
-- We found some data instances may be relavant with the question, put them into your simulation if possible:
-{{VALUES}}
-{% endif %}
 
 Database Schema
 ###
@@ -21,10 +17,15 @@ NL Question:
 Hint:
 {{HINT}}
 
+{% if VALUES %}
+- We found some data instances may be relavant with the question, put them into your simulation if possible:
+{{VALUES}}
+{% endif %}
+
 Return ONLY a valid JSON object with following structure (keys and string values **must** use double quotes `"` — never single quotes `'`):
 {% raw %}
 {
-    "database_instances": {
+    "data": {
         "table1": [["col1_value", "col2_value", ...], ...]
         "table2": [...]
         ...
@@ -32,6 +33,8 @@ Return ONLY a valid JSON object with following structure (keys and string values
     }
 }
 {% endraw %}
+
+Make sure that each table's array should contain ONLY data rows; DO NOT include column names as the first element.
 
 {% if HISTORY %}
 Below are previously simulated database instances:
