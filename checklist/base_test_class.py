@@ -342,8 +342,6 @@ class TestClass(ABC):
             tokens_used += usage
             logprobs.append(logprob)
             traces.append(trace)
-            # hard-code for orc special handling
-            if hasattr(result, "orc_tag"): continue
             passes.append(passed)
             for k, v in fixture.items():
                 if k not in fixtures: fixtures[k] = []

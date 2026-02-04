@@ -7,6 +7,38 @@ from sqlglot.optimizer.qualify import qualify
 from .execution import execute_sql
 from .db_info import get_table_all_columns, get_db_all_tables
 
+def is_sql_do_math(sql: str) -> bool:
+    """
+    Checks if the SQL query performs math operations such as AVG/SUM or +, -, *, /.
+    
+    Args:
+        sql (str): The SQL query string.
+    """
+    try:
+        parsed_sql = parse_one(sql, read='sqlite')
+        math_aggs = {"AVG", "SUM"}
+        math_expressions = (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod)
+
+        first_select = next(parsed_sql.find_all(exp.Select), None)
+        if not first_select:
+            return False
+
+        for select_exp in first_select.expressions:
+            expression_body = select_exp.this if isinstance(select_exp, exp.Alias) else select_exp
+
+            for math_exp in math_expressions:
+                if next(expression_body.find_all(math_exp), None):
+                    return True
+
+            for agg in expression_body.find_all(exp.AggFunc):
+                if agg.key and agg.key.upper() in math_aggs:
+                    return True
+
+        return False
+    except Exception as e:
+        logging.critical(f"Error in is_sql_do_math: {e}\nSQL: {sql}")
+        raise e
+
 def get_sql_tables(db_path: str, sql: str) -> List[str]:
     """
     Retrieves table names involved in an SQL query.
@@ -103,39 +135,6 @@ def get_sql_columns_dict(db_path: str, sql: str) -> Dict[str, List[str]]:
                 columns_dict[table_name].append(column_name)
 
     return columns_dict
-
-def get_sql_condition_literals(db_path: str, sql: str) -> Dict[str, Dict[str, List[str]]]:
-    """
-    Retrieves literals used in SQL query conditions.
-    
-    Args:
-        db_path (str): Path to the database file.
-        sql (str): The SQL query string.
-        
-    Returns:
-        Dict[str, Dict[str, List[str]]]: Dictionary of tables and their columns with condition literals.
-    """
-    try:
-        columns_dict = get_sql_columns_dict(db_path, sql)
-        used_entities = {}
-        for where_exp in parse_one(sql, read="sqlite").find_all(exp.Where):
-            for literal in where_exp.find_all(exp.Literal):
-                if literal == literal.parent.expression:
-                    for column_exp in literal.parent.find_all(exp.Column):
-                        column_name = column_exp.name
-                        table_name = next(
-                            (table for table, columns in columns_dict.items() if column_name.lower() in [c.lower() for c in columns]), None)
-                        if table_name:
-                            if table_name not in used_entities:
-                                used_entities[table_name] = {}
-                            if column_name not in used_entities[table_name]:
-                                used_entities[table_name][column_name] = []
-                            if literal.this not in used_entities[table_name][column_name]:
-                                used_entities[table_name][column_name].append(literal.this)
-        return used_entities
-    except Exception as e:
-        logging.critical(f"Error in get_sql_condition_literals: {e}\nSQL: {sql}")
-        raise e
 
 def _check_value_exists(db_path: str, table_name: str, column_name: str, value: str) -> Optional[str]:
     """

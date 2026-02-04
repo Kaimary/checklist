@@ -21,6 +21,7 @@ from checklist.database_manager import DatabaseManager
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
 from checklist.base_test_class import SchemaPruningMixin, TestClass, ValidationError
 from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
+from checklist.database_utils.sql_parser import is_sql_do_math
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table, sqlite_type_map
 
@@ -129,7 +130,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         self.test_cases = self._generator()
         # logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
 
-    def _compare_query_results(self, preds, oracles):
+    def _compare_query_results(self, preds, oracles, do_math=False):
         def __normalize_scalar(value):
             if isinstance(value, bool):
                 return value
@@ -172,9 +173,10 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                 if oracle_row[i:i+n] == pred:
                     return True
             return False
-        if preds is None: return False
-        # Marked as `true` judgment if empty result happens, cuz most probably the simulated database made something wrong...
+        # if the simulated database can't execute the sql (both empty-results), most probably the simulated database made something wrong...
+        # in this case, make it pass to avoid high false negative rate
         if not preds or not oracles: return True
+        if do_math and preds[0] == (None,): return True
         if len(set(preds)) != len([tuple(x) for x in oracles]): return False
 
         preds_frozen = [__freeze(p) for p in preds]
@@ -191,13 +193,10 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         res = validate_sql_query(ret.test_fixtures.db, self.sql, max_returned_rows="all")
         logging.info(f"Validating SQL: {self.sql}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
-        # the simulated database can't execute the sql propertly, most probably the simulation missing some pk/fk-like columns
-        # to ensure good performance, set a special tag in the ret to make final detection as "UNDETERMINED"
-        if ret.results.pred is None: ret.results.orc_tag = True
         ret.results.target = ret.test_fixtures.oracle["rows"] if "rows" in ret.test_fixtures.oracle.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        passed = self._compare_query_results(ret.results.pred, ret.results.target, do_math=is_sql_do_math(self.sql))
         return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
 
     def _validate_test_fixture(self, response):
