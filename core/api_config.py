@@ -1,3 +1,0 @@
-API_BASE = ""
-API_KEY = ""
-MODEL_NAME = ""

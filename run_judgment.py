@@ -40,7 +40,7 @@ if __name__ == '__main__':
     logging.basicConfig(
         level=logging.INFO,
         filename=(
-            f'logs/{datetime.now():%Y%m%d_%H%M%S}_{Path(output_file_name).stem}.log'
+            f'output/logs/{datetime.now():%Y%m%d_%H%M%S}_{Path(output_file_name).stem}.log'
             if not args.debug else None
         ),
         filemode='a',

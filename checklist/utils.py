@@ -6,8 +6,8 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from judges import GuardianJudge, LLMJudge
-from evaluation.bird_evaluation.evaluation import execute_model
+from checklist.judges import GuardianJudge, LLMJudge
+from checklist.eval.bird.evaluation import execute_model
 from checklist.red.parser.schema import Schema
 from checklist.database_utils.db_info import get_db_schema_from_json
 from checklist.test_classes import CrossModelTestClass, NLReviewTestClass, NoiseRowTestClass, \

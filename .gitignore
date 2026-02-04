@@ -9,8 +9,7 @@ _release_data
 build
 venv/
 data/
-test_cases/
-logs/
+output/
 .env
 .env.new
 test_*
