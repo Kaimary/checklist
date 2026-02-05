@@ -65,7 +65,6 @@ if __name__ == '__main__':
     judgments = open(output_file_path, 'a+')
     red_schemas = get_red_schemas(data, args.db_root_path, args.schema_file_path)
     for idx, ex in tqdm(enumerate(data), total=len(data), bar_format="{l_bar}{bar:10}{r_bar}{bar:-10b}"):
-        # if idx < 395: continue
         db_id, db_path, nl, hint, pred, gold, judgment_gold_label = get_data_from_bench(
             ex, idx+start_idx, args.benchmark_name, args.predicted_sql_path, args.db_root_path)
         

@@ -6,7 +6,6 @@ import numpy as np
 from collections import defaultdict, OrderedDict
 
 from .abstract_test import load_test, read_pred_file
-from .viewer.suite_summarizer import SuiteSummarizer
 
 class TestSuite:
     def __init__(self, format_example_fn=None, print_fn=None):
@@ -416,45 +415,6 @@ class TestSuite:
             n = 1 if self.info[testname]['type'] == 'MFT' else 2
             testcases = test.form_testcases(n_per_testcase=n)
         return test_info, testcases
-
-    def visual_summary_table(self, types=None, capabilities=None):
-        """Displays a matrix visualization of the test suite
-
-        Parameters
-        ----------
-        types : list(string)
-            If not None, will only show tests of these test types.
-            Options are MFT, INV, and DIR
-        capabilities : list(string)
-            If not None, will only show tests with these capabilities.
-
-        Returns
-        -------
-        SuiteSummarizer
-            jupyter visualization
-
-        """
-        print("Please wait as we prepare the table data...")
-        test_infos = []
-        for testname in self.tests.keys():
-            test, info = self.tests[testname], self.info[testname]
-
-            local_info = test.form_test_info(
-                name=testname,
-                capability=info["capability"] if "capability" in info else None,
-                description=info["description"] if "description" in info else None
-            )
-            if (not capabilities or local_info["capability"] in capabilities) and \
-                (not types or local_info["type"] in types):
-                test_infos.append(local_info)
-
-        capability_order = ['Vocabulary', 'Taxonomy', 'Robustness', 'NER',  'Fairness', 'Temporal', 'Negation', 'Coref', 'SRL', 'Logic']
-        cap_order = lambda x: capability_order.index(x["capability"]) if x in capability_order else 100
-        test_infos = sorted(test_infos, key=cap_order)
-        return SuiteSummarizer(
-            test_infos=test_infos,
-            select_test_fn=self._on_select_test
-        )
 
     def save(self, path):
         """Serializes the suite and saves it to a file

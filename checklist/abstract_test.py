@@ -3,10 +3,6 @@ from colorama import Fore, Style
 import dill
 from munch import Munch
 import numpy as np
-import inspect
-from .expect import iter_with_optional, Expect
-
-from .viewer.test_summarizer import TestSummarizer
 
 def load_test(file):
     dill._dill._reverse_typemap['ClassType'] = type
@@ -90,21 +86,6 @@ class AbstractTest(ABC):
     def from_file(file):
         return load_test(file)
 
-    def _extract_examples_per_testcase(
-        self, xs, preds, confs, expect_results, labels, meta, nsamples, only_include_fail=True):
-        iters = list(iter_with_optional(xs, preds, confs, labels, meta))
-        idxs = [0] if self.print_first else []
-        idxs = [i for i in np.argsort(expect_results) if not only_include_fail or expect_results[i] <= 0]
-        if preds is None or (type(preds) == list and len(preds) == 0) or len(idxs) > len(iters):
-            return None
-        if self.print_first:
-            if 0 in idxs:
-                idxs.remove(0)
-            idxs.insert(0, 0)
-        idxs = idxs[:nsamples]
-        iters = [iters[i] for i in idxs]
-        return idxs, iters, [expect_results[i] for i in idxs]
-
     def print(self, xs, preds, confs, expect_results, labels=None, meta=None, format_example_fn=None, nsamples=3):
         result = self._extract_examples_per_testcase(
             xs, preds, confs, expect_results, labels, meta, nsamples, only_include_fail=True)
@@ -132,11 +113,6 @@ class AbstractTest(ABC):
         """
         self.expect = expect
         self.update_expect()
-
-    def update_expect(self):
-        self._check_results()
-        self.results.expect_results = self.expect(self)
-        self.results.passed = Expect.aggregate(self.results.expect_results, self.agg_fn)
 
     def example_list_and_indices(self, n=None, seed=None):
         """Subsamples test cases
@@ -650,10 +626,3 @@ class AbstractTest(ABC):
                     "tags": []
                 })
         return testcases
-
-    def visual_summary(self, name=None, description=None, capability=None, n_per_testcase=3):
-        self._check_results()
-        # get the test meta
-        test_info = self.form_test_info(name, description, capability)
-        testcases = self.form_testcases(n_per_testcase)
-        return TestSummarizer(test_info, testcases)

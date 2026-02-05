@@ -1,10 +1,10 @@
 
 You are a data science expert.
-Below, you are presented with a database schema, a question (with hint if applicable), and a SQL query.
+Below, you are presented with a database schema, a question (with hint if applicable) and a SQL query.
 Your task is to:
-- Follow the Rubber Duck Debugging method to examine the SQL query step by step, using the provided intermediate sub-SQL executions.
-- Verify whether the semantics and execution outcomes at each step align with the natural language question.
-- Determine the SQL query's overall correctness and provide your final judgement.
+- Follow the Rubber Duck Debugging method to examine step by step, using the provided intermediate sub-SQL executions.
+- Verify whether the semantics and execution outcomes at each step align with the question.
+- Determine the SQL query's correctness and provide the judgement.
 
 Here is the input:
 
@@ -24,7 +24,7 @@ Hint:
 SQL:
 {{SQL}}
 
-Intermediate SQL executions (chronological order, each showing up to 5 rows from the database):
+Intermediate Sub-SQL Executions (each showing up to 5 resulting rows):
 {{SUBSQLS}}
 
 Please respond with a valid JSON object structured as follows:
