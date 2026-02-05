@@ -12,7 +12,7 @@ from munch import Munch
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
-from checklist.spinner import Spinner
+# from checklist.spinner import Spinner
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.red.parser.report import BugLevel
@@ -32,7 +32,6 @@ class SemanticCheckTestClass(TestClass):
     def set(self, red_schema, **kwargs):
         super().set(**kwargs)
         self.schema = red_schema
-        self.test_cases = self._generator()
 
     def _compare_query_results(self, pred):
         if pred: return False
@@ -80,32 +79,32 @@ class SemanticCheckTestClass(TestClass):
     def _generator(self):
         if self.use_cache: return self._load_cached_test_cases()
         
-        bugs, outputs = [], []
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            ret = Munch()
-            ret.test_fixtures = Munch()
-            parsed_query = None
+        bugs = []
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        # with spinner:
+        ret = Munch()
+        ret.test_fixtures = Munch()
+        parsed_query = None
+        try:
+            parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+        except Exception as e:
+            print(e)
+            bugs.append(f"{e} SQL parse failed! \nSQL: {self.sql}")
+        if parsed_query:
             try:
-                parsed_query = Query(self.sql, copy.deepcopy(self.schema))
+                bugs.extend(parsed_query.validate())
             except Exception as e:
-                print(e)
-                bugs.append(f"{e} SQL parse failed! \nSQL: {self.sql}")
-            if parsed_query:
-                try:
-                    bugs.extend(parsed_query.validate())
-                except Exception as e:
-                    bugs.append(f"{e} Query validation process failed. \nSQL: {self.sql}")
-            # for b in bugs: print(f"level: {b.level}, desc: {b.description}")
-            # Hard-code for spider to ignore `column type mismathes aggregation` bugs
-            if "spider" in self.db_path: bugs = [bug for bug in bugs if not isinstance(bug, str) and "but function" not in bug.description]
-            if bugs: 
-                logging.info("\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug for bug in bugs)))
-            ret.test_fixtures.bugs = bugs
-            outputs.append(self._form_instance(len(outputs), ret))
-            del parsed_query
+                bugs.append(f"{e} Query validation process failed. \nSQL: {self.sql}")
+        # for b in bugs: print(f"level: {b.level}, desc: {b.description}")
+        # Hard-code for spider to ignore `column type mismathes aggregation` bugs
+        if "spider" in self.db_path: bugs = [bug for bug in bugs if not isinstance(bug, str) and "but function" not in bug.description]
+        if bugs: 
+            logging.info("\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug for bug in bugs)))
+        ret.test_fixtures.bugs = bugs
+        self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+        del parsed_query
 
-        return outputs
+        return
 
 class OracleResultTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
@@ -121,7 +120,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
         self.parser2 = get_parser(parser_name="oracle_data_generation")
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string)
-        self.test_cases = self._generator()
+        # self.test_cases = self._generator()
         # logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
 
     def _compare_query_results(self, preds, oracles, do_math=False):
@@ -402,9 +401,9 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                 for c, v in c2vals.items()
             )
 
-        history, outputs = [], []
+        history = []
         retry = 0
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         cond_literals = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_sql_condition_literals(self.sql)
         state_lock = threading.Lock()
 
@@ -455,14 +454,14 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
 
         def submit_task(executor, futures):
             with state_lock:
-                if len(outputs) >= self.num or retry >= self.max_retry:
+                if len(self.test_cases) >= self.num or retry >= self.max_retry:
                     return False
                 history_string = __history_to_string(history) if history else None
             future = executor.submit(_generate_candidate, history_string)
             futures.add(future)
             return True
 
-        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
             futures = set()
             for _ in range(self.parallel_workers):
                 if not submit_task(executor, futures):
@@ -479,9 +478,9 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                         logging.exception("Oracle result generation worker failed", exc_info=exc)
                         with state_lock:
                             retry += 1
-                            if verbose:
-                                spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
-                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                         continue
 
                     appended_to_history = False
@@ -492,9 +491,9 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                             self._validate_test_fixture2(response2, history)
                             history.append(ret.test_fixtures)
                             appended_to_history = True
-                            outputs.append(self._form_instance(len(outputs), ret))
-                            spinner.set_message(f"Generated {len(outputs)} test cases ...")
-                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+                            # spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                             if stop_generation:
                                 break
                     except ValidationError as e:
@@ -502,18 +501,18 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
                             if appended_to_history and history:
                                 history.pop()
                             retry += 1
-                            if verbose:
-                                spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                         logging.warning(f"Test fixture validation failed: {e}")
                     except Exception as err:
                         with state_lock:
                             if appended_to_history and history:
                                 history.pop()
                             retry += 1
-                            if verbose:
-                                spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
-                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                         logging.exception("Failed to materialize oracle test instance", exc_info=err)
 
                     if stop_generation:
@@ -524,7 +523,7 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
             for fut in futures:
                 fut.cancel()
 
-        return outputs
+        return
 
 class NoiseRowTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
@@ -539,7 +538,7 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
         self.parser = get_parser(parser_name="noise_data_injection")
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string, copy_existing_rows=True)
-        self.test_cases = self._generator()
+        # self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
         if not preds or not oracles: return False
@@ -731,8 +730,8 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
             )
 
         retry = 0
-        history, outputs = [], []
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        history = []
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
 
         def _generate_candidate(history_string):
@@ -756,13 +755,13 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
 
         def submit_task(executor, futures):
             with state_lock:
-                if len(outputs) >= self.num or retry >= self.max_retry: return False
+                if len(self.test_cases) >= self.num or retry >= self.max_retry: return False
                 history_string = __history_to_string(history) if history else None
             future = executor.submit(_generate_candidate, history_string)
             futures.add(future)
             return True
 
-        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
             futures = set()
             for _ in range(self.parallel_workers):
                 if not submit_task(executor, futures):
@@ -779,8 +778,8 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
                         logging.exception("Noise data generation worker failed", exc_info=exc)
                         with state_lock:
                             retry += 1
-                            if verbose:
-                                spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
                         continue
 
                     appended_to_history = False
@@ -789,29 +788,29 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
                             self._validate_test_fixture(response, history)
                             history.append(ret.test_fixtures)
                             appended_to_history = True
-                            outputs.append(self._form_instance(len(outputs), ret))
-                            spinner.set_message(f"Generated {len(outputs)} test cases ...")
-                            stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+                            # spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                             if stop_generation: break
                     except ValidationError as e:
                         with state_lock:
                             if appended_to_history and history:
                                 history.pop()
                             retry += 1
-                            if verbose:
-                                spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                         logging.warning(f"Test fixture validation failed: {e}")
                     except Exception as err:
                         with state_lock:
                             if appended_to_history and history:
                                 history.pop()
                             retry += 1
-                            if verbose:
-                                spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
                         logging.exception("Failed to materialize test instance", exc_info=err)
 
                     with state_lock:
-                        stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                        stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
 
                     if stop_generation:
                         break
@@ -821,7 +820,7 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
             for fut in futures:
                 fut.cancel()
 
-        return outputs
+        return
 
 class CrossModelTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
@@ -835,7 +834,7 @@ class CrossModelTestClass(SchemaPruningMixin, TestClass):
                      ["chess", "cscsql32b", "omnisql32b", "llm:gpt-5.1"])
         self.model_pool = self._create_nl2sql_model_pool(model_list)
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
-        self.test_cases = self._generator()
+        # self.test_cases = self._generator()
 
     def _create_nl2sql_model_pool(self, model_list):
         MODEL_CLASS_MAP = {
@@ -923,58 +922,56 @@ class CrossModelTestClass(SchemaPruningMixin, TestClass):
 
         prompt = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
         parser = get_parser(parser_name="nl2sql_translation")
-        outputs = []
         invalids = set()
         retry = 0
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        with spinner:
-            while len(outputs) < self.num and retry < self.max_retry:
-                candidates = []
-                ret = Munch()
-                ret.test_fixtures = Munch()
-                for model in random.sample(self.model_pool, len(self.model_pool)):
-                    one_retry = 0
-                    while True and one_retry < 3:
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        while len(self.test_cases) < self.num and retry < self.max_retry:
+            candidates = []
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            for model in random.sample(self.model_pool, len(self.model_pool)):
+                one_retry = 0
+                while True and one_retry < 3:
+                    if isinstance(model, GenericLLM):
+                        prompt = get_prompt(
+                            template_name="nl2sql_translation",
+                            schema_string=self.schema_string,
+                            invalid_queries_string=__error_to_string(invalids) if invalids else None
+                        )
+                        candidate = model(
+                            prompt=prompt, 
+                            parser=parser, 
+                            request_kwargs={"HINT": self.hint, "QUESTION": self.nl}
+                        )
+                    else:
+                        candidate = model(nl=self.nl)
+                    try:
+                        self._validate_test_fixture(candidate)
+                        break
+                    except ValidationError as e:
+                        logging.warning(f"Candidate SQL validation failed: {e}")
+                        # if verbose: spinner.set_message(f"Candidate SQL validation failed: {e} ...")
                         if isinstance(model, GenericLLM):
-                            prompt = get_prompt(
-                                template_name="nl2sql_translation",
-                                schema_string=self.schema_string,
-                                invalid_queries_string=__error_to_string(invalids) if invalids else None
-                            )
-                            candidate = model(
-                                prompt=prompt, 
-                                parser=parser, 
-                                request_kwargs={"HINT": self.hint, "QUESTION": self.nl}
-                            )
-                        else:
-                            candidate = model(nl=self.nl)
-                        try:
-                            self._validate_test_fixture(candidate)
+                            invalids.add((candidate, str(e)))
+                            one_retry += 1
+                        else: 
+                            one_retry = 3 # set larger than threshold
                             break
-                        except ValidationError as e:
-                            logging.warning(f"Candidate SQL validation failed: {e}")
-                            if verbose: spinner.set_message(f"Candidate SQL validation failed: {e} ...")
-                            if isinstance(model, GenericLLM):
-                                invalids.add((candidate, str(e)))
-                                one_retry += 1
-                            else: 
-                                one_retry = 3 # set larger than threshold
-                                break
-                    if one_retry < 3: 
-                        candidates.append(candidate)
-                        if len(candidates) == self.active_model_num: break
-                # validate after getting all candidates
-                try: 
-                    self._validate_test_fixture(candidates)
-                except ValidationError as e:
-                    retry += 1
-                    logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                    if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                    continue
-                ret.test_fixtures.candidates = candidates
-                outputs.append(self._form_instance(len(outputs), ret))
-                spinner.set_message(f"Generated {len(outputs)} test cases ...")
-        return outputs
+                if one_retry < 3: 
+                    candidates.append(candidate)
+                    if len(candidates) == self.active_model_num: break
+            # validate after getting all candidates
+            try: 
+                self._validate_test_fixture(candidates)
+            except ValidationError as e:
+                retry += 1
+                logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
+                # if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                continue
+            ret.test_fixtures.candidates = candidates
+            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+            # spinner.set_message(f"Generated {len(outputs)} test cases ...")
+        return
 
 class QueryReviewTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
@@ -990,7 +987,7 @@ class QueryReviewTestClass(SchemaPruningMixin, TestClass):
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self.parser = get_parser(parser_name="query_rubber_duck_debugging")
         self.prompt = get_prompt(template_name="query_rubber_duck_debugging", schema_string=self.schema_string)
-        self.test_cases = self._generator()
+        # self.test_cases = self._generator()
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
@@ -1077,19 +1074,18 @@ class QueryReviewTestClass(SchemaPruningMixin, TestClass):
             ret.trace = trace
             return ret
 
-        outputs = []
         retry = 0
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
 
         def submit_task(executor, futures):
             with state_lock:
-                if len(outputs) >= self.num or retry >= self.max_retry: return False
+                if len(self.test_cases) >= self.num or retry >= self.max_retry: return False
             future = executor.submit(_generate_case)
             futures.add(future)
             return True
 
-        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
             futures = set()
             for _ in range(self.parallel_workers):
                 if not submit_task(executor, futures):
@@ -1105,15 +1101,15 @@ class QueryReviewTestClass(SchemaPruningMixin, TestClass):
                     except Exception as exc:
                         logging.warning(f"Query review test case generation failed: {exc}")
                         retry += 1
-                        if verbose:
-                            spinner.set_message(f"Generation failed (attempt {retry}/{self.max_retry})...")
+                        # if verbose:
+                        #     spinner.set_message(f"Generation failed (attempt {retry}/{self.max_retry})...")
                     else:
                         with state_lock:
-                            outputs.append(self._form_instance(len(outputs), ret))
-                            if verbose:
-                                spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+                            # if verbose:
+                            #     spinner.set_message(f"Generated {len(outputs)} test cases ...")
 
-                    stop_generation = len(outputs) >= self.num or retry >= self.max_retry
+                    stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                     if stop_generation:
                         break
 
@@ -1122,7 +1118,7 @@ class QueryReviewTestClass(SchemaPruningMixin, TestClass):
             for fut in futures:
                 fut.cancel()
 
-        return outputs
+        return
 
 class NLReviewTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
@@ -1139,7 +1135,7 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
         self.prompt2 = get_prompt(template_name="nl_rubber_duck_debugging", schema_string=self.schema_string)
         self.parser = get_parser(parser_name="nl_paraphrase_generation")
         self.parser2 = get_parser(parser_name="nl_rubber_duck_debugging")
-        self.test_cases = self._generator()
+        # self.test_cases = self._generator()
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
@@ -1243,8 +1239,7 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
         paraphrases = _prepare_paraphrases()
         exec = validate_sql_query(self.db_path, self.sql, max_returned_rows=5)
         preview = exec.get("RESULT")
-        outputs = []
-        spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
         paraphrase_queue = deque(paraphrases)
         futures = {}
@@ -1258,12 +1253,12 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
             futures[future] = paraphrase
             return True
 
-        with spinner, ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
             for _ in range(min(self.parallel_workers, len(paraphrases))):
                 if not submit_task(executor):
                     break
 
-            while futures and len(outputs) < self.num:
+            while futures and len(self.test_cases) < self.num:
                 done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
                 for fut in done:
                     paraphrase = futures.pop(fut)
@@ -1279,11 +1274,11 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
                             paraphrase_queue.append(paraphrase)
                     else:
                         with state_lock:
-                            outputs.append(self._form_instance(len(outputs), case_ret))
-                            if verbose:
-                                spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            self.test_cases.append(self._form_instance(len(self.test_cases), case_ret))
+                            # if verbose:
+                            #     spinner.set_message(f"Generated {len(outputs)} test cases ...")
 
-                    if len(outputs) >= self.num:
+                    if len(self.test_cases) >= self.num:
                         break
 
                     submit_task(executor)
@@ -1291,4 +1286,4 @@ class NLReviewTestClass(SchemaPruningMixin, TestClass):
             for fut in futures:
                 fut.cancel()
 
-        return outputs
+        return

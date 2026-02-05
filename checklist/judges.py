@@ -67,7 +67,7 @@ class GuardianJudge(AbstractJudge):
         # Iterate over the provided test classes and add them to the suite
         for test in tests:
             test_instance = test()  # Create an instance of the test class
-            self.suite.add(test_instance, name=test.__name__)
+            self.suite.add(test_instance, name=test_instance.abbrev_name)
 
     def set(self, nl, hint, sql, gold, db_id, db_root_path, red_schema):
         self.suite.set(

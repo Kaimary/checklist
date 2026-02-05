@@ -1,10 +1,12 @@
-import collections
 import dill
 import json
 import inspect
+import collections
 import numpy as np
+from contextlib import nullcontext
 from collections import defaultdict, OrderedDict
 
+from .spinner import _Spinner
 from .abstract_test import load_test, read_pred_file
 
 class TestSuite:
@@ -290,10 +292,22 @@ class TestSuite:
         """
         ret = {}
         judgments = []
+        munch = None
+        false_judgments = 0
+        max_false_judgments = 3
         for name, t in self.tests.items():
-            if verbose: print(f'Running {name}')
-            passed, judgment, munch, criteria, logprobs, tokens_used, traces = t.run()
-            if isinstance(judgment, bool): judgments.append(judgment)
+            spinner_ctx = _Spinner(name) if verbose else nullcontext()
+            with spinner_ctx:
+                passed, judgment, munch, criteria, logprobs, tokens_used, traces = t.run()
+            if verbose:
+                status_symbol = "🤔"
+                if judgment is True: status_symbol = "✅"
+                elif judgment is False: status_symbol = "❌"
+                print(f"[✔️] {name} {status_symbol}")
+            if isinstance(judgment, bool):
+                judgments.append(judgment)
+                if not judgment: false_judgments += 1
+
             ret[name] = {
                 "judgment": judgment,
                 "total": len(passed),
@@ -304,7 +318,11 @@ class TestSuite:
                 "criteria": criteria,
                 "traces": traces
             }
-        ret["final_judgment"] = any(judgments) if judgments else "UNDETERMINED"
+            if false_judgments >= max_false_judgments:
+                if verbose: print(f"[checklist] Stopping early after {false_judgments} failed tests (threshold: {max_false_judgments}).")
+                break
+        if false_judgments >= max_false_judgments: ret["final_judgment"] = False
+        else: ret["final_judgment"] = any(judgments) if judgments else "UNDETERMINED"
         return ret, munch
             
     def summary(self, types=None, capabilities=None, **kwargs):

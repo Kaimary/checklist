@@ -56,6 +56,9 @@ class SchemaCache:
             )
         return cls._cache[db_id]
 
+
+_DB_SCHEMA_CACHE = {}
+
 class SchemaPruningMixin:
     """Shared helpers for classes that optionally prune large schemas via LLM."""
     def _quote_identifier(self, identifier: str) -> str:
@@ -251,6 +254,19 @@ class SchemaPruningMixin:
         return getattr(self, "_pruned_db_snapshot_path", None)
 
     def _get_db_schema(self, threshold):
+        cache_key = (
+            self.db_id,
+            self.nl,
+            self.sql
+        )
+        cached = _DB_SCHEMA_CACHE.get(cache_key)
+        if cached:
+            schema_copy = copy.deepcopy(cached["schema"])
+            cached_schema_string = cached.get("schema_string")
+            if cached_schema_string is not None:
+                self.schema_string = cached_schema_string
+            return schema_copy, cached["schema_pruned"]
+
         schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
         kept = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_sql_columns_dict(self.sql)
         schema_generator = DatabaseSchemaGenerator(
@@ -275,6 +291,11 @@ class SchemaPruningMixin:
                 schema_with_descriptions=schema_with_descriptions,
                 include_value_description=True
             )
+        _DB_SCHEMA_CACHE[cache_key] = {
+            "schema": copy.deepcopy(schema),
+            "schema_pruned": schema_pruned,
+            "schema_string": getattr(self, "schema_string", None)
+        }
         return schema, schema_pruned
 
 class TestClass(ABC):
@@ -337,6 +358,7 @@ class TestClass(ABC):
         passes, logprobs, traces = [], [], []
         tokens_used = 0
         fixtures, results = Munch(), Munch()
+        self._generator()
         for tc in self.test_cases:
             passed, fixture, result, logprob, usage, trace = self.test_fn(tc)
             tokens_used += usage

@@ -16,11 +16,11 @@ from checklist.test_classes import CrossModelTestClass, NLReviewTestClass, Noise
 DEFAULT_BACKBONE_MODEL_NAME = "gpt-4o-mini-0708"
 TEST_CLASS_MAP = {
     "sem": SemanticCheckTestClass,
-    "orc": OracleResultTestClass,
     "nos": NoiseRowTestClass,
     "crs": CrossModelTestClass,
-    "qry": QueryReviewTestClass,
+    "orc": OracleResultTestClass,
     "nlr": NLReviewTestClass,
+    "qry": QueryReviewTestClass
 }
     # "test": TestingTestClass,
     # "slf": SelfConsistencyTestClass,
