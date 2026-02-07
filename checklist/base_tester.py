@@ -298,7 +298,7 @@ class SchemaPruningMixin:
         }
         return schema, schema_pruned
 
-class TestClass(ABC):
+class BaseTester(ABC):
     def __init__(self, name, abbrev_name, abbrev_type, key="nl+sql", use_cache=False):
         self.name = name
         self.abbrev_name = abbrev_name

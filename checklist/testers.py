@@ -19,15 +19,15 @@ from checklist.red.parser.report import BugLevel
 from checklist.red.parser.red_parser import Query
 from checklist.database_manager import DatabaseManager
 from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
-from checklist.base_test_class import SchemaPruningMixin, TestClass, ValidationError
+from checklist.base_tester import SchemaPruningMixin, BaseTester, ValidationError
 from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
 from checklist.database_utils.sql_parser import is_sql_do_math
 from checklist.database_utils.execution import execute_sql, validate_sql_query
 from checklist.database_utils.db_opt import create_sqlite_database, duplicate_sqlite_database, insert_rows_into_table, sqlite_type_map
 
-class SemanticCheckTestClass(TestClass):
+class SemanticCheckTester(BaseTester):
     def __init__(self):
-        super().__init__("Semantic Check Test Class", "semantic_check", "semantic", key="sql")
+        super().__init__("Semantic Check Tester", "semantic_check", "semantic", key="sql")
 
     def set(self, red_schema, **kwargs):
         super().set(**kwargs)
@@ -106,9 +106,9 @@ class SemanticCheckTestClass(TestClass):
 
         return
 
-class OracleResultTestClass(SchemaPruningMixin, TestClass):
+class OracleResultTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
-        super().__init__("Oracle Result Test Class", "oracle_result", "oracle", key="nl")
+        super().__init__("Oracle Result Tester", "oracle_result", "oracle", key="nl")
 
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
@@ -525,9 +525,9 @@ class OracleResultTestClass(SchemaPruningMixin, TestClass):
 
         return
 
-class NoiseRowTestClass(SchemaPruningMixin, TestClass):
+class NoiseRowTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
-        super().__init__("Noise Row Injection Test Class", "metamorphic_noise", "metamorphic")
+        super().__init__("Noise Row Injection Tester", "metamorphic_noise", "metamorphic")
 
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
@@ -714,7 +714,7 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
             if snapshot_path and os.path.exists(snapshot_path):
                 shutil.copy2(snapshot_path, ret.test_fixtures.db)
             else:
-                logging.warning("Pruned schema snapshot unavailable; rebuilding synchronously for NoiseRowTestClass.")
+                logging.warning("Pruned schema snapshot unavailable; rebuilding synchronously for NoiseRowTester.")
                 create_sqlite_database(ret.test_fixtures.db, self.schema_string)
                 self._copy_rows_into_pruned_db(ret.test_fixtures.db, self.schema)
         for t, row in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
@@ -822,9 +822,9 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
 
         return
 
-class CrossModelTestClass(SchemaPruningMixin, TestClass):
+class CrossModelTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
-        super().__init__("Majority Voting Test Class", "cross_model", "differential")
+        super().__init__("Majority Voting Tester", "cross_model", "differential")
         
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
@@ -973,9 +973,9 @@ class CrossModelTestClass(SchemaPruningMixin, TestClass):
             # spinner.set_message(f"Generated {len(outputs)} test cases ...")
         return
 
-class QueryReviewTestClass(SchemaPruningMixin, TestClass):
+class QueryReviewTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
-        super().__init__("Step-through Query Review Test Class", "query_review", "explore")
+        super().__init__("Step-through Query Review Tester", "query_review", "explore")
 
     def set(self, red_schema, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
@@ -1120,9 +1120,9 @@ class QueryReviewTestClass(SchemaPruningMixin, TestClass):
 
         return
 
-class NLReviewTestClass(SchemaPruningMixin, TestClass):
+class NLReviewTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
-        super().__init__("Step-through Natural Language Review Test Class", "nl_review", "explore")
+        super().__init__("Step-through Natural Language Review Tester", "nl_review", "explore")
 
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)

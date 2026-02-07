@@ -12,7 +12,7 @@ from .spinner import _Spinner
 from .abstract_test import load_test, read_pred_file
 
 
-HIGH_PRECISION_TESTERS = {"SemanticCheckTestClass", "NoiseRowTestClass"}
+HIGH_PRECISION_TESTERS = {"SemanticCheckTester", "NoiseRowTester"}
 
 class TestSuite:
     def __init__(self, format_example_fn=None, print_fn=None):
@@ -71,25 +71,7 @@ class TestSuite:
             raise(Exception('If test does not have test.name, you must specify a name'))
         if name is None:
             name = test.name
-        # if description is None:
-        #     description = test.description
-        # type_map = {
-        #     SEM: 'SEM',
-        #     MTP: 'MTP',
-        #     DIF: 'DIF',
-        #     EXP: 'EXP',
-        #     ORC: 'ORC',
-        # }
-        # typez = type_map[type(test)]
         self.tests[name] = test
-        # self.info[name]['capability'] = capability
-        # self.info[name]['type'] = typez
-        # if description:
-        #     self.info[name]['description'] = description
-        # if format_example_fn:
-        #     self.info[name]['format_example_fn'] = format_example_fn
-        # if print_fn:
-        #     self.info[name]['print_fn'] = format_example_fn
 
     def remove(self, name):
         """Removes test from suite

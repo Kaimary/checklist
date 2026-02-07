@@ -10,23 +10,23 @@ from checklist.judges import GuardianJudge, LLMJudge
 from checklist.eval.bird.evaluation import execute_model
 from checklist.red.parser.schema import Schema
 from checklist.database_utils.db_info import get_db_schema_from_json
-from checklist.test_classes import CrossModelTestClass, NLReviewTestClass, NoiseRowTestClass, \
-    OracleResultTestClass, QueryReviewTestClass, SemanticCheckTestClass
+from checklist.testers import CrossModelTester, NLReviewTester, NoiseRowTester, \
+    OracleResultTester, QueryReviewTester, SemanticCheckTester
 
 DEFAULT_BACKBONE_MODEL_NAME = "gpt-4o-mini-0708"
 TEST_CLASS_MAP = {
-    "sem": SemanticCheckTestClass,
-    "nos": NoiseRowTestClass,
-    "crs": CrossModelTestClass,
-    "orc": OracleResultTestClass,
-    "nlr": NLReviewTestClass,
-    "qry": QueryReviewTestClass
+    "sem": SemanticCheckTester,
+    "nos": NoiseRowTester,
+    "crs": CrossModelTester,
+    "orc": OracleResultTester,
+    "nlr": NLReviewTester,
+    "qry": QueryReviewTester
 }
-    # "test": TestingTestClass,
-    # "slf": SelfConsistencyTestClass,
-    # "syn": MinimumSyntaxTestClass,
-    # "lax": NLRelaxTestClass,
-    # "stn": NLStrengthenTestClass,
+    # "test": TestingTester,
+    # "slf": SelfConsistencyTester,
+    # "syn": MinimumSyntaxTester,
+    # "lax": NLRelaxTester,
+    # "stn": NLStrengthenTester,
 _PRED_CACHE = {}
 
 def get_data_from_bench(ex, idx, bench_name, predicted_sql_path, db_root_path):
