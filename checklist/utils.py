@@ -3,15 +3,18 @@ import os
 import re
 import pickle
 from pathlib import Path
-
 from tqdm import tqdm
 
 from checklist.judges import GuardianJudge, LLMJudge
 from checklist.eval.bird.evaluation import execute_model
 from checklist.red.parser.schema import Schema
-from checklist.database_utils.db_info import get_db_schema_from_json
-from checklist.testers import CrossModelTester, NLReviewTester, NoiseRowTester, \
-    OracleResultTester, QueryReviewTester, SemanticCheckTester
+from checklist.db_utils.db_info import get_db_schema_from_json
+from checklist.testers.cross_model_tester import CrossModelTester
+from checklist.testers.nl_review_tester import NLReviewTester
+from checklist.testers.noise_row_tester import NoiseRowTester
+from checklist.testers.oracle_result_tester import OracleResultTester
+from checklist.testers.query_review_tester import QueryReviewTester
+from checklist.testers.semantic_check_tester import SemanticCheckTester
 
 DEFAULT_BACKBONE_MODEL_NAME = "gpt-4o-mini-0708"
 TEST_CLASS_MAP = {

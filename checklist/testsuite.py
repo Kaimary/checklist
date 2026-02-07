@@ -4,12 +4,12 @@ import json
 import inspect
 import collections
 import threading
+import time
 import numpy as np
 from contextlib import nullcontext
 from collections import defaultdict, OrderedDict
 
-from .spinner import _Spinner
-from .abstract_test import load_test, read_pred_file
+from .spinners import _Spinner
 
 
 HIGH_PRECISION_TESTERS = {"SemanticCheckTester", "NoiseRowTester"}
@@ -40,33 +40,7 @@ class TestSuite:
             
             t.set(**kwargs)
 
-    @staticmethod
-    def from_file(path):
-        """Loads suite from file
-
-        Parameters
-        ----------
-        path : string
-            pickled (dill) file
-
-        Returns
-        -------
-        TestSuite
-            the suite
-
-        """
-        return load_test(path)
-
     def add(self, test, name=None):
-        """Adds a test to suite
-
-        Parameters
-        ----------
-        test : AbstractTest
-            test
-        name : string
-            test name. If test has test.name, this is optional.
-        """
         if name is None and test.name is None:
             raise(Exception('If test does not have test.name, you must specify a name'))
         if name is None:
@@ -74,14 +48,6 @@ class TestSuite:
         self.tests[name] = test
 
     def remove(self, name):
-        """Removes test from suite
-
-        Parameters
-        ----------
-        name : string
-            test name
-
-        """
         if name not in self.tests:
             raise(Exception('%s not in suite.' % name))
         del self.tests[name]
@@ -209,34 +175,6 @@ class TestSuite:
             c = confs[slice(*self.test_ranges[n])]
             t.run_from_preds_confs(p, c, overwrite=overwrite)
 
-    def run_from_file(self, path, file_format=None, format_fn=None, ignore_header=False, overwrite=False):
-        """Update test.results (run tests) for every test, from a prediction file
-
-        Parameters
-        ----------
-        path : string
-            prediction file path
-        file_format : string
-            None, or one of 'pred_only', 'softmax', binary_conf', 'pred_and_conf', 'pred_and_softmax', 'squad',
-            pred_only: each line has a prediction
-            softmax: each line has prediction probabilities separated by spaces
-            binary_conf: each line has the prediction probability of class 1 (binary)
-            pred_and_conf: each line has a prediction and a confidence value, separated by a space
-            pred_and_softmax: each line has a prediction and all softmax probabilities, separated by a space
-            squad: TODO
-        format_fn : function
-            If not None, function that reads a line in the input file and outputs a tuple of (prediction, confidence)
-        ignore_header : bool
-            If True, skip first line in the file
-        overwrite : bool
-            If False, raise exception if results already exist
-
-        """
-        preds, confs = read_pred_file(path, file_format=file_format,
-                                 format_fn=format_fn,
-                                 ignore_header=ignore_header)
-        self.run_from_preds_confs(preds, confs, overwrite=overwrite)
-
     def run(self, predict_and_confidence_fn, verbose=True, **kwargs):
         """Runs all tests in the suite
         See run in abstract_test.py .
@@ -294,7 +232,11 @@ class TestSuite:
         def _render_status_line(name):
             def __strike(text):
                 return ''.join(c + '\u0336' for c in text)
-            state, symbol = status_state[name]
+            state_info = status_state[name]
+            state = state_info[0]
+            symbol = state_info[1] if len(state_info) > 1 else None
+            tokens_used = state_info[2] if len(state_info) > 2 else None
+            elapsed = state_info[3] if len(state_info) > 3 else None
             if state == "pending":
                 return f"[  ] {name}"
             if state == "aborted":
@@ -302,7 +244,17 @@ class TestSuite:
             if state == "running":
                 frame = symbol if symbol else "|"
                 return f"[ {frame} ] {name}"
-            suffix = f" {symbol}" if symbol else ""
+            suffix = ""
+            if symbol:
+                suffix_parts = [symbol]
+                metrics = []
+                if tokens_used is not None:
+                    metrics.append(f"(tokens: {tokens_used},")
+                if elapsed is not None:
+                    metrics.append(f"time: {elapsed:.2f}s)")
+                if metrics:
+                    suffix_parts.append(" ".join(metrics))
+                suffix = " " + " ".join(suffix_parts)
             return f"[ ✔️ ] {name}{suffix}"
 
         def _print_status_block():
@@ -333,10 +285,13 @@ class TestSuite:
             else:
                 spinner_ctx = nullcontext()
             with spinner_ctx:
+                start_time = time.time()
                 passed, judgment, munch, criteria, logprobs, tokens_used, traces = t.run()
-            status_state[name] = ("completed", _result_symbol(judgment))
+            elapsed = time.time() - start_time
+            status_state[name] = ("completed", _result_symbol(judgment), tokens_used, elapsed)
             _print_status_block()
             last_tester = t.__class__.__name__
+            confidence = None
             if isinstance(judgment, bool):
                 judgments.append(judgment)
                 if t.__class__.__name__ not in HIGH_PRECISION_TESTERS:
@@ -381,7 +336,7 @@ class TestSuite:
 
         if break_triggered:
             pending_exists = False
-            for tn, (state, _) in status_state.items():
+            for tn, (state, _, _, _) in status_state.items():
                 if state == "pending":
                     status_state[tn] = ("aborted", None)
                 pending_exists = True

@@ -1,10 +1,10 @@
 import os
 from checklist.llm import LLM
-from checklist.test_suite import TestSuite
+from checklist.testsuite import TestSuite
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
-from checklist.database_manager import DatabaseManager
-from checklist.database_utils.db_catalog.csv_utils import load_tables_description
+from checklist.db_manager import DatabaseManager
+from checklist.db_utils.db_catalog.csv_utils import load_tables_description
 
 class AbstractJudge:
     def __init__(self, name):

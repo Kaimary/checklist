@@ -15,11 +15,11 @@ from abc import ABC, abstractmethod
 from checklist.llm import LLM
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
-from checklist.database_utils.db_opt import create_sqlite_database
-from checklist.database_utils.schema import DatabaseSchema
-from checklist.database_utils.schema_generator import DatabaseSchemaGenerator
-from checklist.database_manager import DatabaseManager
-from checklist.database_utils.db_catalog.csv_utils import load_tables_description
+from checklist.db_utils.db_opt import create_sqlite_database
+from checklist.db_utils.schema import DatabaseSchema
+from checklist.db_utils.schema_generator import DatabaseSchemaGenerator
+from checklist.db_manager import DatabaseManager
+from checklist.db_utils.db_catalog.csv_utils import load_tables_description
 
 load_dotenv(override=True)
 TEST_INSTANCE_ROOT_PATH = Path(os.getenv("TEST_INSTANCE_ROOT_PATH"))
