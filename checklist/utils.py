@@ -5,7 +5,8 @@ import pickle
 from pathlib import Path
 from tqdm import tqdm
 
-from checklist.judges import GuardianJudge, LLMJudge
+from checklist.judges.llm_judge import LLMJudge
+from checklist.judges.guardian_judge import GuardianJudge
 from checklist.eval.bird.evaluation import execute_model
 from checklist.red.parser.schema import Schema
 from checklist.db_utils.db_info import get_db_schema_from_json
