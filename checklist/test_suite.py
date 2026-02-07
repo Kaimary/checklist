@@ -1,13 +1,18 @@
+import sys
 import dill
 import json
 import inspect
 import collections
+import threading
 import numpy as np
 from contextlib import nullcontext
 from collections import defaultdict, OrderedDict
 
 from .spinner import _Spinner
 from .abstract_test import load_test, read_pred_file
+
+
+HIGH_PRECISION_TESTERS = {"SemanticCheckTestClass", "NoiseRowTestClass"}
 
 class TestSuite:
     def __init__(self, format_example_fn=None, print_fn=None):
@@ -280,51 +285,140 @@ class TestSuite:
 
         Parameters
         ----------
-        overwrite : bool
-            If False, raise exception if results already exist
         verbose : bool
             If True, print extra information
-        n : int
-            If not None, number of samples to draw
-        seed : int
-            Seed to use if n is not None
-
         """
         ret = {}
         judgments = []
         munch = None
-        false_judgments = 0
-        max_false_judgments = 3
+        vote_true = 0
+        vote_false = 0
+        score = 0
+        majority = len([t for t in self.tests.values() if t.__class__.__name__ not in HIGH_PRECISION_TESTERS]) / 2 + 1
+        correct, incorrect = False, False
+        break_triggered = False
+
+        def _result_symbol(val):
+            if val is True:
+                return "✅"
+            if val is False:
+                return "❌"
+            return "🤔"
+
+        status_state = OrderedDict((name, ("pending", None)) for name in self.tests.keys())
+        status_rendered = False
+        render_lock = threading.Lock()
+
+        def _render_status_line(name):
+            def __strike(text):
+                return ''.join(c + '\u0336' for c in text)
+            state, symbol = status_state[name]
+            if state == "pending":
+                return f"[  ] {name}"
+            if state == "aborted":
+                return __strike(f"[  ] {name}")
+            if state == "running":
+                frame = symbol if symbol else "|"
+                return f"[ {frame} ] {name}"
+            suffix = f" {symbol}" if symbol else ""
+            return f"[ ✔️ ] {name}{suffix}"
+
+        def _print_status_block():
+            nonlocal status_rendered
+            if not verbose:
+                return
+            with render_lock:
+                lines = len(status_state)
+                if status_rendered and lines:
+                    sys.stdout.write(f"\033[{lines}F")
+                for tn in status_state:
+                    sys.stdout.write(_render_status_line(tn) + "\n")
+                sys.stdout.flush()
+                status_rendered = True
+
+        def _update_spinner_line(test_name, frame):
+            status_state[test_name] = ("running", frame)
+            _print_status_block()
+
+        _print_status_block()
+        last_tester = None
+
         for name, t in self.tests.items():
-            spinner_ctx = _Spinner(name) if verbose else nullcontext()
+            if verbose:
+                status_state[name] = ("running", "|")
+                _print_status_block()
+                spinner_ctx = _Spinner(lambda frame, tn=name: _update_spinner_line(tn, frame))
+            else:
+                spinner_ctx = nullcontext()
             with spinner_ctx:
                 passed, judgment, munch, criteria, logprobs, tokens_used, traces = t.run()
-            if verbose:
-                status_symbol = "🤔"
-                if judgment is True: status_symbol = "✅"
-                elif judgment is False: status_symbol = "❌"
-                print(f"[✔️] {name} {status_symbol}")
+            status_state[name] = ("completed", _result_symbol(judgment))
+            _print_status_block()
+            last_tester = t.__class__.__name__
             if isinstance(judgment, bool):
                 judgments.append(judgment)
-                if not judgment: false_judgments += 1
-
+                if t.__class__.__name__ not in HIGH_PRECISION_TESTERS:
+                    if judgment:
+                        vote_true += 1
+                    else:
+                        vote_false += 1
+                    probs = np.exp(logprobs)
+                    signs = np.where(passed, 1, -1)
+                    confidence = abs(np.mean(probs * signs)) # confidence magnitude
+                    score += confidence if judgment else -1 * confidence
+                    
             ret[name] = {
                 "judgment": judgment,
                 "total": len(passed),
                 "passed": int(np.sum(passed)),
                 "results": passed.tolist(),
                 "logprobs": logprobs,
+                "confidence": confidence,
                 "tokens_used": tokens_used,
                 "criteria": criteria,
                 "traces": traces
             }
-            if false_judgments >= max_false_judgments:
-                if verbose: print(f"[checklist] Stopping early after {false_judgments} failed tests (threshold: {max_false_judgments}).")
+            stop_due_to = None
+            if t.__class__.__name__ in HIGH_PRECISION_TESTERS and judgment is False:
+                incorrect = True
+                stop_due_to = "critical_failure"
+            elif vote_false >= majority:
+                incorrect = True
+                stop_due_to = "majority_false"
+            elif vote_true >= majority:
+                correct = True
+                stop_due_to = "majority_true"
+
+            if stop_due_to:
+                ret["last_tester"] = last_tester
+                break_triggered = True
                 break
-        if false_judgments >= max_false_judgments: ret["final_judgment"] = False
-        else: ret["final_judgment"] = any(judgments) if judgments else "UNDETERMINED"
+
+        if not break_triggered and last_tester is not None:
+            ret["last_tester"] = last_tester
+
+        if break_triggered:
+            pending_exists = False
+            for tn, (state, _) in status_state.items():
+                if state == "pending":
+                    status_state[tn] = ("aborted", None)
+                pending_exists = True
+            if pending_exists:
+                _print_status_block()
+
+        if incorrect:
+            ret["final_judgment"] = False
+        elif correct:
+            ret["final_judgment"] = True
+        elif not judgments:
+            ret["final_judgment"] = "UNDETERMINED"
+        else:
+            if verbose: print("TIE (no clear correct or incorrect decision), use confidence")
+            ret["final_judgment"] = True if score > 0 else False
+        if verbose:
+            print()
         return ret, munch
-            
+
     def summary(self, types=None, capabilities=None, **kwargs):
         """Print stats and example failures for each test.
         See summary in abstract_test.py
@@ -375,7 +469,7 @@ class TestSuite:
 
         """
         for k, v in ret.items():
-            if k == "final_judgment": continue
+            if k in ["final_judgment", "last_tester"]: continue
             test_judgment = v['judgment']
             results = v['results']
             if test_judgment is None: 

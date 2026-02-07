@@ -824,7 +824,7 @@ class NoiseRowTestClass(SchemaPruningMixin, TestClass):
 
 class CrossModelTestClass(SchemaPruningMixin, TestClass):
     def __init__(self):
-        super().__init__("Majority Voting Test Class", "majority_vote", "differential")
+        super().__init__("Majority Voting Test Class", "cross_model", "differential")
         
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)

@@ -73,10 +73,10 @@ class Spinner:
         self.stop()
 
 class _Spinner:
-    """Simple CLI spinner to show test progress."""
+    """Simple spinner that invokes a callback on each frame."""
 
-    def __init__(self, test_name, interval=0.1):
-        self.test_name = test_name
+    def __init__(self, tick_fn, interval=0.1):
+        self.tick_fn = tick_fn
         self.interval = interval
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._spin, daemon=True)
@@ -91,14 +91,11 @@ class _Spinner:
     def stop(self):
         self._stop_event.set()
         self._thread.join()
-        # Clear current spinner line
-        sys.stdout.write("\r" + " " * (len(self.test_name) + 6) + "\r")
-        sys.stdout.flush()
 
     def _spin(self):
         for frame in itertools.cycle("|/-\\"):
             if self._stop_event.is_set():
                 break
-            sys.stdout.write(f"\r[{frame}] {self.test_name}")
-            sys.stdout.flush()
+            if self.tick_fn is not None:
+                self.tick_fn(frame)
             time.sleep(self.interval)
