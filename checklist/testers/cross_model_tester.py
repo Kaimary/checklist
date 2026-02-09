@@ -55,7 +55,7 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
         ret.results.target = res1['RESULT'] if res1['STATUS'] == 'OK' else None
         ret.results.standard = "vote(pred) == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.token_used, ret.trace
+        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
     
     def _validate_test_fixture(self, candidates):
         def __sql_executable_check(candidate, db_path):
@@ -140,7 +140,10 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
                                 parser=self.parser,
                                 request_kwargs={"HINT": self.hint, "QUESTION": self.nl}
                             )
-                            total_tokens += metadata.get("token_used", 0)
+
+                            self.calls += 1
+                            self.token_used += metadata.get("token_used", 0)
+                            
                             logprob = metadata.get("avg_logprob")
                             logprob_values.append(logprob)
                         else:
@@ -186,7 +189,8 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
 
         def submit_task(executor, futures):
             with state_lock:
-                if len(self.test_cases) >= self.num or retry >= self.max_retry:
+                outstanding = len(self.test_cases) + len(futures)
+                if outstanding >= self.num or retry >= self.max_retry:
                     return False
                 snapshot_invalids = list(invalids) if invalids else None
             future = executor.submit(_generate_candidate, snapshot_invalids)
