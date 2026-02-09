@@ -26,7 +26,7 @@ class SemanticCheckTester(BaseTester):
         ret.results.pred = [bug for bug in ret.test_fixtures.bugs if type(bug) == str or bug.level == BugLevel.ERROR]
         ret.results.standard = "pred is empty"
         passed = self._compare_query_results(ret.results.pred)
-        return passed, ret.test_fixtures, ret.results, None, 0, ""
+        return passed, ret.test_fixtures, ret.results, None, ret.trace
     
     def write_test_fixture_file(self, output_dir, **kwargs):
         data = {
@@ -67,6 +67,7 @@ class SemanticCheckTester(BaseTester):
         # with spinner:
         ret = Munch()
         ret.test_fixtures = Munch()
+        trace = f"->>Single Test Case Tracelog<<-\n"
         parsed_query = None
         try:
             parsed_query = Query(self.sql, copy.deepcopy(self.schema))
@@ -81,8 +82,10 @@ class SemanticCheckTester(BaseTester):
         # for b in bugs: print(f"level: {b.level}, desc: {b.description}")
         # Hard-code for spider to ignore `column type mismathes aggregation` bugs
         if "spider" in self.db_path: bugs = [bug for bug in bugs if not isinstance(bug, str) and "but function" not in bug.description]
-        if bugs: 
-            logging.info("\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug for bug in bugs)))
+        for bug in bugs:
+            trace += "\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug))
+            logging.info("\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug)))
+        ret.trace = trace
         ret.test_fixtures.bugs = bugs
         self.test_cases.append(self._form_instance(len(self.test_cases), ret))
         del parsed_query

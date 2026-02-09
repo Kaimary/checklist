@@ -47,7 +47,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
     
     def _validate_test_fixture(self, response, history):
         def __output_format_check(response):
@@ -81,18 +81,6 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                         f"Existing table names: {','.join(tables)}"
                     )
             # column count and data types consistent check
-            sqlite_type_map = {
-                'INT': int,
-                'INTEGER': int,
-                'REAL': float,
-                'TEXT': str,
-                'BLOB': bytes,
-                'NUMERIC': float,
-                'DATE': str,
-                'DATETIME': str,
-                'bool': bool,
-                "VARCHAR": str
-            }
             data = response["injected_rows"]
             for t, row in data.items():
                 if not row: continue
@@ -237,17 +225,22 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                 history_string=history_string
             )
             response, metadata = self.backbone(prompt, self.parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
-            metadata = metadata or {}
-            trace += f"[injected rows]: {response.get('injected_rows', '')}"
-            ret.token_used = metadata.get("token_used", 0)
-            ret.logprob = metadata.get("logprob", None)
-            ret.trace = trace
-            ret.test_fixtures.data = response.get("injected_rows", {})
+            
+            self.call += 1
+            self.token_used += metadata.get("token_used", 0)
+
+            ret.avg_logprob = metadata.get("avg_logprob", None)
+            ret.test_fixtures.data = response.get("injected_rows", {}) or None
+            if ret.test_fixtures.data:
+                trace += f"[injected rows]: {response.get('injected_rows', '')}"
+            ret.trace = trace 
             return response, ret
 
         def submit_task(executor, futures):
             with state_lock:
-                if len(self.test_cases) >= self.num or retry >= self.max_retry: return False
+                outstanding = len(self.test_cases) + len(futures)
+                if outstanding >= self.num or retry >= self.max_retry:
+                    return False
                 history_string = __history_to_string(history) if history else None
             future = executor.submit(_generate_candidate, history_string)
             futures.add(future)

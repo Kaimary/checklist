@@ -35,7 +35,7 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
         ret.results.target = True
         ret.results.standard = "pred == target"
         passed = ret.results.pred
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
         
     def _form_instance(self, idx, ret):
         """
@@ -105,22 +105,26 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
                     "SUBSQLS": subsql_context
                 }
             )
-            metadata = metadata or {}
+
+            self.calls += 1
+            self.token_used += metadata.get("token_used", 0)
+
+            ret.avg_logprob = metadata.get("avg_logprob", None)
+            ret.test_fixtures.turns = response
             trace += f"{response.get('chain_of_thought_reasoning', '')}\n"
             trace += f"{response.get('judgment', '')}"
-            ret.token_used = metadata.get("token_used", 0)
-            ret.logprob = metadata.get("logprob", None)
-            ret.test_fixtures.turns = response
             ret.trace = trace
             return ret
 
         retry = 0
-        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
         state_lock = threading.Lock()
-
+        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        
         def submit_task(executor, futures):
             with state_lock:
-                if len(self.test_cases) >= self.num or retry >= self.max_retry: return False
+                outstanding = len(self.test_cases) + len(futures)
+                if outstanding >= self.num or retry >= self.max_retry:
+                    return False
             future = executor.submit(_generate_case)
             futures.add(future)
             return True

@@ -35,7 +35,7 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
         ret.results.target = True
         ret.results.standard = "pred == target"
         passed = ret.results.pred
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
         
     def _form_instance(self, idx, ret):
         """
@@ -81,8 +81,19 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
         def _prepare_paraphrases():
             retry = 0
             paraphrases = [self.nl]
-            while len(paraphrases) < 3 and retry < self.max_retry:
-                response, _ = self.backbone(self.prompt, self.parser, request_kwargs={"HINT": self.hint, "QUESTION": self.nl, "SQL": self.sql})
+            while len(paraphrases) < self.num and retry < self.max_retry:
+                response, metadata = self.backbone(
+                    self.prompt, 
+                    self.parser, 
+                    request_kwargs={
+                        "HINT": self.hint, 
+                        "QUESTION": self.nl, 
+                        "SQL": self.sql,
+                        "NUM": self.num - 1})
+                
+                self.calls += 1
+                self.token_used += metadata.get("token_used", 0)
+                
                 try:
                     self._validate_test_fixture(response)
                 except ValidationError as e:
@@ -110,14 +121,17 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
                             "RESULT": '\n'.join(f'{tup}' for tup in preview) \
                                 if isinstance(preview, list) else preview},
                     )
+
+                    self.calls += 1
+                    self.token_used += metadata.get("token_used", 0)
+
+                    ret.avg_logprob = metadata.get("avg_logprob", None)
+                    ret.test_fixtures.turns = response
                     trace += (
                         f"{response['chain_of_thought_reasoning']} -> "
                         f"{response['judgment']}\n"
                     )
-                    ret.logprob = metadata.get("logprob", None)
-                    ret.token_used = metadata.get("token_used", 0)
                     ret.trace = trace
-                    ret.test_fixtures.turns = response
                     return ret
                 except Exception as exc:
                     last_exc = exc
