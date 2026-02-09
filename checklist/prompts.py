@@ -62,7 +62,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
         # "noise_data_alignment_fix": {"input_variables": ["HINT", "QUESTION", "TABLE_NAME", "COLUMN_SPEC", "ROW_VALUES", "ISSUE_DESCRIPTION"]},
         "nl_paraphrase_generation": {"input_variables": ["HINT", "QUESTION", "SQL", "NUM"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "query_rubber_duck_debugging": {"input_variables": ["HINT", "QUESTION", "SQL", "SUBSQLS"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
-        "nl_rubber_duck_debugging": {"input_variables": ["QUESTION", "SQL", "HINT", "RANDOMNESS1", "RANDOMNESS2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
+        "nl_rubber_duck_debugging": {"input_variables": ["QUESTION", "SQL", "HINT", "RESULT"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},
         "llm_nl2sql_judgment": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "EXAMPLES": kwargs.get("examples_string", "")}},
         "llm_cot_nl2sql_judgment": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "EXAMPLES": kwargs.get("examples_string", "")}},
         # "schema_pruning": {"input_variables": ["HINT", "QUESTION", "DATABASE_SCHEMA"], "partial_variables": {"KEYS": kwargs.get("keys_string", ""), "COLUMNS": kwargs.get("columns_string", ""), "ERROR": kwargs.get("error_string", "")}},

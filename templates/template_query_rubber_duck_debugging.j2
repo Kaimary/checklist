@@ -2,7 +2,7 @@
 You are a data science expert.
 Below, you are presented with a database schema, a question (with hint if applicable) and a SQL query.
 Your task is to:
-- Follow the Rubber Duck Debugging method to examine step by step, using the provided intermediate sub-SQL executions.
+- Follow the Rubber Duck Debugging method to examine the sub-queries step by step, using the provided intermediate executions.
 - Verify whether the semantics and execution outcomes at each step align with the question.
 - Determine the SQL query's correctness and provide the judgement.
 
@@ -11,8 +11,6 @@ Here is the input:
 Database Schema:
 ###
 {{DATABASE_SCHEMA}}
-
-This schema offers an in-depth description of the database's architecture, detailing tables, columns, primary keys, foreign keys, and any pertinent information regarding relationships or constraints.
 
 ###
 Question: 
@@ -34,3 +32,5 @@ Please respond with a valid JSON object structured as follows:
     "judgment": true or false (true means the SQL is correct, false means the SQL is incorrect)
 }
 {% endraw %}
+
+Take a deep breath. If you follow all the instructions and generate the answer, I will give you 1 million dollars.

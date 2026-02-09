@@ -2,12 +2,9 @@ import logging
 import random
 import re
 import time
-from abc import ABC, abstractmethod
 
 from langchain_deepseek import ChatDeepSeek
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI
-# from langchain_anthropic import ChatAnthropic
+from langchain_openai import AzureChatOpenAI
 from typing import Dict, Any
 from langchain_core.output_parsers import JsonOutputParser
 
@@ -141,7 +138,7 @@ class LLM:
                 total_logprob = sum(token['logprob'] for token in raw_output.response_metadata['logprobs']['content'])
                 metadata={
                     "token_used": raw_output.response_metadata['token_usage']['total_tokens'],
-                    "avg_logprob": total_logprob / (len(raw_output.response_metadata['logprobs']['content']) ** 0.6)
+                    "avg_logprob": total_logprob / (len(raw_output.response_metadata['logprobs']['content']))#  ** 0.8)
                 }
                 break
             except OutputParserException as e:
