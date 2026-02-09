@@ -1,43 +1,35 @@
 import os
 import random
 import logging
+import threading
 from munch import Munch
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 # from checklist.spinners import Spinner
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.base_tester import SchemaPruningMixin, BaseTester, ValidationError
-from checklist.models import CHESS, DAILSQL, RESDSQL, CODES15b, CODES7b, CSCSQL32b, CSCSQL7b, GenericLLM, OMNISQL32b
-from checklist.db_utils.execution import execute_sql, validate_sql_query
+from checklist.models import MODEL_CLASS_MAP, GenericLLM
+from checklist.db_utils.execution import validate_sql_query
 
 
 class CrossModelTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
-        super().__init__("Majority Voting Tester", "cross_model", "differential")
+        super().__init__("Cross Models Tester", "cross_model", "differential")
         
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.num=3
+        self.max_retry = self.num
         self.active_model_num = 3
-        model_list=(["resdsql", "codes15b", "dailsql", "llm:gpt-5.1"] if "spider" in self.db_root_path else \
-                     ["chess", "cscsql32b", "omnisql32b", "llm:gpt-5.1"])
+        model_list=(["resdsql", "codes15b", "dailsql", "llm:gpt-5.1"] \
+                    if "spider" in self.db_root_path else ["chess", "cscsql32b", "omnisql32b", "llm:gpt-5.1"])
+        self.parser = get_parser(parser_name="nl2sql_translation")
         self.model_pool = self._create_nl2sql_model_pool(model_list)
+        self.parallel_workers = min(self.num, len(self.model_pool)) if self.model_pool else self.num
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
-        # self.test_cases = self._generator()
 
     def _create_nl2sql_model_pool(self, model_list):
-        MODEL_CLASS_MAP = {
-            "cscsql7b": CSCSQL7b,
-            "cscsql32b": CSCSQL32b,
-            "chess": CHESS,
-            "omnisql32b": OMNISQL32b,
-            "resdsql": RESDSQL,
-            "dailsql": DAILSQL,
-            "codes15b": CODES15b,
-            "codes7b": CODES7b
-        }
         models = []
         for name in model_list:
             if name in MODEL_CLASS_MAP:
@@ -49,6 +41,7 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
         return models
     
     def _compare_query_results(self, pred_list, origin):
+        if origin is None: return False
         vote = 0
         for pred in pred_list:
             if set(pred) == set(origin): vote+=1
@@ -56,15 +49,13 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
-        ret.results.standard = "majority(pred) == target"
-        ret.results.pred = [execute_sql(self.db_path, candidate_sql) for candidate_sql in ret.test_fixtures.candidates]
-        try:
-            ret.results.target = execute_sql(self.db_path, self.sql)
-            passed = self._compare_query_results(ret.results.pred, ret.results.target)
-        except:
-            ret.results.target = None
-            passed = False
-        return passed, ret.test_fixtures, ret.results, None, 0, ""
+        res = [validate_sql_query(self.db_path, sql, max_returned_rows="all") for sql in ret.test_fixtures.candidates]
+        ret.results.pred = [r['RESULT'] if r['STATUS'] == 'OK' else None for r in res]
+        res1 = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
+        ret.results.target = res1['RESULT'] if res1['STATUS'] == 'OK' else None
+        ret.results.standard = "vote(pred) == target"
+        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.token_used, ret.trace
     
     def _validate_test_fixture(self, candidates):
         def __sql_executable_check(candidate, db_path):
@@ -79,9 +70,8 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
             if len(candidates) < active_model_num:
                 raise ValidationError(f"Candidate number check failed. Expected {active_model_num} candidates, but got {len(candidates)}.")
             return True
-        # mutanted SQL syntax check
+
         if isinstance(candidates, str): __sql_executable_check(candidates, self.db_path)
-        # candidate number check
         else: __candidate_number_check(candidates, self.active_model_num)
         
     def _form_instance(self, idx, ret):
@@ -111,55 +101,139 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
                 for idx, invalid in enumerate(invalids)
             )
 
-        prompt = get_prompt(template_name="nl2sql_translation", schema_string=self.schema_string)
-        parser = get_parser(parser_name="nl2sql_translation")
         invalids = set()
         retry = 0
-        # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
-        while len(self.test_cases) < self.num and retry < self.max_retry:
+        state_lock = threading.Lock()
+
+        def _current_invalid_string(snapshot_string, local_invalids):
+            local_string = __error_to_string(local_invalids) if local_invalids else None
+            if snapshot_string and local_string:
+                return "\n".join([snapshot_string, local_string])
+            return snapshot_string or local_string
+
+        def _generate_candidate(snapshot_invalids):
+            local_invalids = []
+            snapshot_string = __error_to_string(snapshot_invalids) if snapshot_invalids else None
             candidates = []
             ret = Munch()
             ret.test_fixtures = Munch()
+            trace_lines = ["->>Parallel Test Case Tracelog<<-"]
+            total_tokens = 0
+            logprob_values = []
+
             for model in random.sample(self.model_pool, len(self.model_pool)):
                 one_retry = 0
-                while True and one_retry < 3:
-                    if isinstance(model, GenericLLM):
-                        prompt = get_prompt(
-                            template_name="nl2sql_translation",
-                            schema_string=self.schema_string,
-                            invalid_queries_string=__error_to_string(invalids) if invalids else None
-                        )
-                        candidate = model(
-                            prompt=prompt, 
-                            parser=parser, 
-                            request_kwargs={"HINT": self.hint, "QUESTION": self.nl}
-                        )
-                    else:
-                        candidate = model(nl=self.nl)
+                candidate_sql = None
+                metadata = {}
+                model_name = getattr(model, "model_name", model.__class__.__name__)
+                trace_lines.append(f"[{model_name}] start generation")
+                while one_retry < self.max_retry:
                     try:
-                        self._validate_test_fixture(candidate)
+                        if isinstance(model, GenericLLM):
+                            prompt = get_prompt(
+                                template_name="nl2sql_translation",
+                                schema_string=self.schema_string,
+                                invalid_queries_string=_current_invalid_string(snapshot_string, local_invalids)
+                            )
+                            candidate_sql, metadata = model(
+                                prompt=prompt,
+                                parser=self.parser,
+                                request_kwargs={"HINT": self.hint, "QUESTION": self.nl}
+                            )
+                            total_tokens += metadata.get("token_used", 0)
+                            logprob = metadata.get("avg_logprob")
+                            logprob_values.append(logprob)
+                        else:
+                            candidate_sql = model(nl=self.nl)
+                            logprob_values.append(-0.23)
+                        self._validate_test_fixture(candidate_sql)
+                        trace_lines.append(f"[{model_name}] candidate accepted: {candidate_sql}")
                         break
                     except ValidationError as e:
                         logging.warning(f"Candidate SQL validation failed: {e}")
-                        # if verbose: spinner.set_message(f"Candidate SQL validation failed: {e} ...")
+                        trace_lines.append(f"[{model_name}] validation failed: {e}")
+                        if isinstance(model, GenericLLM) and candidate_sql:
+                            local_invalids.append((candidate_sql, str(e)))
                         if isinstance(model, GenericLLM):
-                            invalids.add((candidate, str(e)))
                             one_retry += 1
-                        else: 
-                            one_retry = 3 # set larger than threshold
+                        else:
+                            one_retry = self.max_retry
+                            candidate_sql = None
                             break
-                if one_retry < 3: 
-                    candidates.append(candidate)
-                    if len(candidates) == self.active_model_num: break
-            # validate after getting all candidates
-            try: 
+                    except Exception as exc:
+                        logging.exception("Cross model candidate generation error", exc_info=exc)
+                        trace_lines.append(f"[{model_name}] generation error: {exc}")
+                        one_retry = self.max_retry
+                        candidate_sql = None
+                        break
+                if candidate_sql is not None and one_retry < self.max_retry:
+                    candidates.append(candidate_sql)
+                    if len(candidates) == self.active_model_num:
+                        break
+                else:
+                    trace_lines.append(f"[{model_name}] generation aborted after retries")
+
+            try:
                 self._validate_test_fixture(candidates)
             except ValidationError as e:
-                retry += 1
-                logging.warning(f"Test fixture validation failed (attempt {retry}/{self.max_retry}): {e}")
-                # if verbose: spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
-                continue
+                return None, local_invalids, e
+
             ret.test_fixtures.candidates = candidates
-            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
-            # spinner.set_message(f"Generated {len(outputs)} test cases ...")
+            ret.token_used = total_tokens
+            ret.avg_logprob = (sum(logprob_values) / len(logprob_values)) if logprob_values else None
+            ret.trace = "\n".join(trace_lines)
+            return ret, local_invalids, None
+
+        def submit_task(executor, futures):
+            with state_lock:
+                if len(self.test_cases) >= self.num or retry >= self.max_retry:
+                    return False
+                snapshot_invalids = list(invalids) if invalids else None
+            future = executor.submit(_generate_candidate, snapshot_invalids)
+            futures.add(future)
+            return True
+
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            futures = set()
+            for _ in range(self.parallel_workers):
+                if not submit_task(executor, futures):
+                    break
+
+            stop_generation = False
+            while futures and not stop_generation:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    futures.remove(fut)
+                    try:
+                        ret, new_invalids, error = fut.result()
+                    except Exception as exc:
+                        logging.exception("Cross model generation worker failed", exc_info=exc)
+                        with state_lock:
+                            retry += 1
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+                        continue
+
+                    if new_invalids:
+                        with state_lock:
+                            invalids.update(new_invalids)
+
+                    if error:
+                        logging.warning(f"Test fixture validation failed (attempt {retry + 1}/{self.max_retry}): {error}")
+                        with state_lock:
+                            retry += 1
+                    elif ret:
+                        with state_lock:
+                            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+
+                    with state_lock:
+                        stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+
+                    if stop_generation:
+                        break
+
+                    submit_task(executor, futures)
+
+            for fut in futures:
+                fut.cancel()
+
         return

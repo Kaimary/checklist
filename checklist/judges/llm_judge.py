@@ -16,10 +16,11 @@ class LLMJudge(BaseJudge):
         self.enable_few_shot = enable_few_shot
         self.enable_cot = enable_cot
 
-    def set(self, nl, hint, pred, db_id, db_root_path, red_schema =None):
+    def set(self, nl, hint, pred, gold, db_id, db_root_path, red_schema =None):
         self.nl = nl
         self.hint = hint
         self.pred = pred
+        self.gold = gold
         self.db_id = db_id
         self.db_root_path = db_root_path
         self.db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
@@ -55,4 +56,4 @@ class LLMJudge(BaseJudge):
             "SQL": self.pred
             }
         )
-        return response | metadata
+        return response | metadata, None

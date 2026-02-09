@@ -355,14 +355,14 @@ class BaseTester(ABC):
     def run(self):
         """Run all generated test cases in this test class
         """
-        passes, logprobs, traces = [], [], []
+        passes, avg_logprobs, traces = [], [], []
         tokens_used = 0
         fixtures, results = Munch(), Munch()
         self._generator()
         for tc in self.test_cases:
-            passed, fixture, result, logprob, usage, trace = self.test_fn(tc)
+            passed, fixture, result, avg_logprob, usage, trace = self.test_fn(tc)
             tokens_used += usage
-            logprobs.append(logprob)
+            avg_logprobs.append(avg_logprob)
             traces.append(trace)
             passes.append(passed)
             for k, v in fixture.items():
@@ -375,4 +375,4 @@ class BaseTester(ABC):
         # Verify whether the number of passed test cases meets the criteria
         else: detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
 
-        return np.array(passes), detection_result, results, self.criteria, logprobs, tokens_used, traces
+        return np.array(passes), detection_result, results, self.criteria, avg_logprobs, tokens_used, traces

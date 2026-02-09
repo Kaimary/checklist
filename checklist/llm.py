@@ -41,9 +41,9 @@ CONFIGS: Dict[str, Dict[str, Any]] = {
     #     "constructor": ChatOpenAI,
     #     "params": {"model": "gpt-4-0125-preview", "temperature": 0}
     # },
-    "gpt-4": {
+    "gpt-4-turbo": {
         "constructor": AzureChatOpenAI,
-        "params": {"model": "gpt-4", "temperature": 0, "logprobs": True}
+        "params": {"model": "gpt-4.1", "temperature": 0, "logprobs": True}
     },
     "gpt-5.1": {
         "constructor": AzureChatOpenAI,
@@ -141,7 +141,7 @@ class LLM:
                 total_logprob = sum(token['logprob'] for token in raw_output.response_metadata['logprobs']['content'])
                 metadata={
                     "token_used": raw_output.response_metadata['token_usage']['total_tokens'],
-                    "logprob": total_logprob / len(raw_output.response_metadata['logprobs']['content'])
+                    "avg_logprob": total_logprob / (len(raw_output.response_metadata['logprobs']['content']) ** 0.6)
                 }
                 break
             except OutputParserException as e:

@@ -286,7 +286,7 @@ class TestSuite:
                 spinner_ctx = nullcontext()
             with spinner_ctx:
                 start_time = time.time()
-                passed, judgment, munch, criteria, logprobs, tokens_used, traces = t.run()
+                passed, judgment, munch, criteria, avg_logprobs, tokens_used, traces = t.run()
             elapsed = time.time() - start_time
             status_state[name] = ("completed", _result_symbol(judgment), tokens_used, elapsed)
             _print_status_block()
@@ -299,7 +299,7 @@ class TestSuite:
                         vote_true += 1
                     else:
                         vote_false += 1
-                    probs = np.exp(logprobs)
+                    probs = np.exp(avg_logprobs)
                     signs = np.where(passed, 1, -1)
                     confidence = abs(np.mean(probs * signs)) # confidence magnitude
                     score += confidence if judgment else -1 * confidence
@@ -309,7 +309,7 @@ class TestSuite:
                 "total": len(passed),
                 "passed": int(np.sum(passed)),
                 "results": passed.tolist(),
-                "logprobs": logprobs,
+                "avg_logprobs": avg_logprobs,
                 "confidence": confidence,
                 "tokens_used": tokens_used,
                 "criteria": criteria,

@@ -157,6 +157,17 @@ class CODES15b(BaseNL2SQLModel):
                 return self.outputs[idx]
         raise ValueError("No matching NL found in the dev set")
 
+MODEL_CLASS_MAP = {
+    "cscsql7b": CSCSQL7b,
+    "cscsql32b": CSCSQL32b,
+    "chess": CHESS,
+    "omnisql32b": OMNISQL32b,
+    "resdsql": RESDSQL,
+    "dailsql": DAILSQL,
+    "codes15b": CODES15b,
+    "codes7b": CODES7b
+}
+
 class GenericLLM(BaseNL2SQLModel):
     def __init__(self, model_name: str = "gpt-4o-mini-0708"):
         super().__init__()
@@ -164,9 +175,10 @@ class GenericLLM(BaseNL2SQLModel):
 
     def __call__(self, **kwargs):
         model = LLM(model_name=self.model_name)
-        response, _ = model(
+        response, metadata = model(
             prompt=kwargs.get("prompt"),
             parser=kwargs.get("parser"),
             request_kwargs=kwargs.get("request_kwargs", {})
         )
-        return response["SQL"].strip()
+        sql = response["SQL"].strip()
+        return sql, metadata
