@@ -235,8 +235,9 @@ class TestSuite:
             state_info = status_state[name]
             state = state_info[0]
             symbol = state_info[1] if len(state_info) > 1 else None
-            tokens_used = state_info[2] if len(state_info) > 2 else None
-            elapsed = state_info[3] if len(state_info) > 3 else None
+            calls = state_info[2] if len(state_info) > 2 else None
+            tokens_used = state_info[3] if len(state_info) > 3 else None
+            elapsed = state_info[4] if len(state_info) > 4 else None
             if state == "pending":
                 return f"[  ] {name}"
             if state == "aborted":
@@ -248,8 +249,10 @@ class TestSuite:
             if symbol:
                 suffix_parts = [symbol]
                 metrics = []
+                if calls is not None:
+                    metrics.append(f"(calls: {calls},")
                 if tokens_used is not None:
-                    metrics.append(f"(tokens: {tokens_used},")
+                    metrics.append(f"tokens: {tokens_used},")
                 if elapsed is not None:
                     metrics.append(f"time: {elapsed:.2f}s)")
                 if metrics:
@@ -286,9 +289,10 @@ class TestSuite:
                 spinner_ctx = nullcontext()
             with spinner_ctx:
                 start_time = time.time()
-                passed, judgment, munch, criteria, avg_logprobs, tokens_used, traces = t.run()
+                passed, judgment, munch, criteria, avg_logprobs, tokens_used, calls, traces = t.run()
+                t.reset()
             elapsed = time.time() - start_time
-            status_state[name] = ("completed", _result_symbol(judgment), tokens_used, elapsed)
+            status_state[name] = ("completed", _result_symbol(judgment), calls, tokens_used, elapsed)
             _print_status_block()
             last_tester = t.__class__.__name__
             confidence = None
@@ -312,6 +316,7 @@ class TestSuite:
                 "avg_logprobs": avg_logprobs,
                 "confidence": confidence,
                 "tokens_used": tokens_used,
+                "calls": calls,
                 "criteria": criteria,
                 "traces": traces
             }
@@ -336,7 +341,7 @@ class TestSuite:
 
         if break_triggered:
             pending_exists = False
-            for tn, (state, _, _, _) in status_state.items():
+            for tn, (state, _, _, _, _) in status_state.items():
                 if state == "pending":
                     status_state[tn] = ("aborted", None)
                 pending_exists = True
@@ -350,7 +355,7 @@ class TestSuite:
         elif not judgments:
             ret["final_judgment"] = "UNDETERMINED"
         else:
-            if verbose: print("TIE (no clear correct or incorrect decision), use confidence")
+            if verbose and len(self.tests.keys()) > 1: print("TIE (no clear correct or incorrect decision), use confidence")
             ret["final_judgment"] = True if score > 0 else False
         if verbose:
             print()

@@ -183,7 +183,7 @@ class SchemaPruningMixin:
                 template_name="schema_pruning_by_selection",
                 error_string='\n'.join(error) if error else None
             )
-            response, _ = self.backbone(
+            response, metadata = self.backbone(
                 prompt,
                 parser,
                 request_kwargs={
@@ -192,6 +192,8 @@ class SchemaPruningMixin:
                     "LARGE_TABLES": json.dumps(large_tables, indent=4)
                 }
             )
+            # self.calls += 1
+            # self.token_used += metadata.get("token_used", 0) 
             try:
                 self._validate_pruned_schema(response)
                 pruned_schema = {}
@@ -305,6 +307,9 @@ class BaseTester(ABC):
         self.abbrev_type = abbrev_type
         self.key = key
 
+        self.token_used = 0
+        self.calls = 0
+
         self.use_cache=use_cache
         self.test_fn = self._test_fn
 
@@ -331,6 +336,10 @@ class BaseTester(ABC):
         self.test_cases = []
         self.max_retry = self.num
 
+    def reset(self):
+        self.token_used = 0
+        self.calls = 0
+
     @abstractmethod
     def _test_fn(self, ret):
         pass
@@ -356,12 +365,10 @@ class BaseTester(ABC):
         """Run all generated test cases in this test class
         """
         passes, avg_logprobs, traces = [], [], []
-        tokens_used = 0
         fixtures, results = Munch(), Munch()
         self._generator()
         for tc in self.test_cases:
-            passed, fixture, result, avg_logprob, usage, trace = self.test_fn(tc)
-            tokens_used += usage
+            passed, fixture, result, avg_logprob, trace = self.test_fn(tc)
             avg_logprobs.append(avg_logprob)
             traces.append(trace)
             passes.append(passed)
@@ -375,4 +382,4 @@ class BaseTester(ABC):
         # Verify whether the number of passed test cases meets the criteria
         else: detection_result = True if np.sum(passes)/len(passes) >= self.criteria else False
 
-        return np.array(passes), detection_result, results, self.criteria, avg_logprobs, tokens_used, traces
+        return np.array(passes), detection_result, results, self.criteria, avg_logprobs, self.token_used, self.calls, traces

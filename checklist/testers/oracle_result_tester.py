@@ -6,7 +6,6 @@ import logging
 import threading
 import numpy as np
 from munch import Munch
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 # from checklist.spinners import Spinner
@@ -30,12 +29,9 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         self.criteria=0.6
         self.max_retry = self.num
         self.parallel_workers = self.num
-        self.parser = get_parser(parser_name="simulate_db_generation")
-        self.parser2 = get_parser(parser_name="oracle_data_generation")
+        self.parser = get_parser(parser_name="oracle_data_generation")
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string)
-        # self.test_cases = self._generator()
-        # logging.info(f"Generate tests took {time.time() - start:.2f} seconds.")   
 
     def _compare_query_results(self, preds, oracles, do_math=False):
         def __normalize_scalar(value):
@@ -104,9 +100,9 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target, do_math=is_sql_do_math(self.sql))
-        return passed, ret.test_fixtures, ret.results, ret.logprob, ret.token_used, ret.trace
+        return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
 
-    def _validate_test_fixture(self, response):
+    def _validate_test_fixture(self, response, history):
         def __output_format_check(response):
             if not isinstance(response, dict):
                 raise ValidationError(
@@ -114,12 +110,21 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                     f"response type: {type(response)}, "
                     f"Expected type: dict"
                 )
-            if 'data' not in response.keys():
+            if 'data' not in response.keys() or 'result' not in response.keys():
                 raise ValidationError(
-                    f"Output format(key) check failed. "
+                    f"Output format(keys) check failed. "
                     f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `data`"
+                    f"Expected keys: `data` and `result`"
                 )
+            if any(k not in response["result"].keys() for k in ["columns", "rows"]): 
+                raise ValidationError(
+                    f"Output format(key in key) check failed. "
+                    f"Keys found in `result`: {','.join(response['result'].keys())}, "
+                    f"Expected keys: `columns` and `rows`"
+                )
+            # quick fix format issues frequently observed
+            if isinstance(response["result"]["rows"], list) and not isinstance(response["result"]["rows"][0], list):
+                response["result"]["rows"] = [response["result"]["rows"]]
             return True
         def __extract_column_types_from_schema_string(schema_string):
             constraints = ('primary key', 'foreign key', 'unique', 'check', 'constraint')
@@ -186,42 +191,6 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                             f"Expected column type: {expected_type}"
                         )
             return True
-        # output format check
-        __output_format_check(response)
-        # schema-data alignment check
-        __schema_data_alignment_check(response)
-
-    def _validate_test_fixture2(self, response, history):
-        def __output_format_check(response):
-            if not isinstance(response, dict):
-                raise ValidationError(
-                    f"Output format(type) check failed. "
-                    f"response type: {type(response)}, "
-                    f"Expected type: dict"
-                )
-            if 'result' not in response.keys():
-                raise ValidationError(
-                    f"Output format(key) check failed. "
-                    f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `result`"
-                )
-            if not isinstance(response["result"], dict):
-                raise ValidationError(
-                    f"Output format(type) check failed. "
-                    f"`result` type: {type(response['result'])}, "
-                    f"Expected type: dict"
-                )
-            # quick fix format issues frequently observed
-            if "columns" in response["result"].keys() and "rows" in response.keys(): response = {"result": response}
-            if any(k not in response["result"].keys() for k in ["columns", "rows"]): 
-                raise ValidationError(
-                    f"Output format(key in key) check failed. "
-                    f"Keys found in `result`: {','.join(response['result'].keys())}, "
-                    f"Expected keys: `columns` and `rows`"
-                )
-            if isinstance(response["result"]["rows"], list) and not isinstance(response["result"]["rows"][0], list):
-                response["result"]["rows"] = [response["result"]["rows"]]
-            return True
         def __response_history_compatible_check(response, history):
             def __dicts_equal___(d1, d2):
                 if d1.keys() != d2.keys():
@@ -241,32 +210,13 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
             
             for h in history:
                 if not __dicts_equal___(response["data"], h["data"]): continue
-                # Check whether result is the same or not if test cases are same. If it is the case, drop it
-                # if __dicts_equal___(response["result"], h["oracle"]): 
                 raise ValidationError("Duplicate(`data`+`result`) test case.")
-                # # Otherwise, double check which `result` is the correct one
-                # retry = 0
-                # prompt = get_prompt(template_name="oracle_result_checking", schema_string=self.schema_string)
-                # parser = get_parser(parser_name="oracle_result_checking")
-                # while True and retry < self.max_retry:
-                #     response2, _ = self.backbone(prompt, parser, request_kwargs={
-                #         "HINT": self.hint,
-                #         "QUESTION": self.nl,
-                #         "INSTANCES": json.dumps(h['data'], indent=4),
-                #         "RESULT1": json.dumps(h['oracle'], indent=4),
-                #         "RESULT2": json.dumps(response["result"], indent=4)
-                #     })
-                #     if isinstance(response2, dict):
-                #         if "result" in response2.keys(): break
-                #         if "columns" in response2.keys() and "rows" in response2.keys():
-                #             response2 = {"result": response2}
-                #             break
-                # # Modify the `result` according to the output (TODO further check its correctness?)
-                # h['oracle'] = response2["result"]
             return True
         
         # output format check
         __output_format_check(response)
+        # schema-data alignment check
+        __schema_data_alignment_check(response)
         # response duplication check
         __response_history_compatible_check(response, history)
 
@@ -324,51 +274,35 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         def _generate_candidate(history_string):
             ret = Munch()
             ret.test_fixtures = Munch()
-            tokens, logprob = 0, 0
             trace = "->>Parallel Test Case Tracelog<<-\n"
             prompt = get_prompt(
-                template_name="simulate_db_generation",
+                template_name="oracle_data_generation",
                 schema_string=self.schema_string,
                 columns_values_string=__values_to_string(cond_literals) if cond_literals else None,
                 history_string=history_string
             )
-            # start = time.time()
             response, metadata = self.backbone(
                 prompt,
                 self.parser,
                 request_kwargs={"QUESTION": self.nl, "HINT": self.hint}
             )
-            metadata = metadata or {}
-            tokens += metadata.get("token_used", 0)
-            logprob += metadata.get("logprob", None)
-            trace += f"[simulated DB]: {response.get('data', '')}"
-            # logging.info(f"simulate_db_generation took {time.time() - start:.2f} seconds.")
-
-            prompt2 = get_prompt(template_name="oracle_data_generation", schema_string=self.schema_string)
-            response2, metadata2 = self.backbone(
-                prompt2,
-                self.parser2,
-                request_kwargs={
-                    "QUESTION": self.nl,
-                    "HINT": self.hint,
-                    "DATABASE_INSTANCES": json.dumps(response.get("data", {}), indent=4)
-                }
-            )
-            metadata2 = metadata2 or {}
-            tokens += metadata2.get("token_used", 0)
-            logprob += metadata2.get("logprob", None)
-            ret.logprob = logprob*0.5
-            ret.token_used = tokens
-            trace += f"[oracle data]: {response2.get('result', '')}"
-            ret.trace = trace
-            ret.test_fixtures.data = response.get("data", {})
-            ret.test_fixtures.oracle = response2.get("result", {})
+            self.calls += 1
+            self.token_used += metadata.get("token_used", 0)
             
-            return response, response2, ret
+            ret.avg_logprob = metadata.get("avg_logprob", 0.0) or None
+            ret.test_fixtures.data = response.get("data", {}) or None
+            ret.test_fixtures.oracle = response.get("result", {}) or None
+            if ret.test_fixtures.data and ret.test_fixtures.oracle:
+                trace += f"[simulated DB]: {response.get('data', '')}"
+                trace += f"[oracle data]: {response.get('result', '')}"
+            ret.trace = trace
+
+            return response, ret
 
         def submit_task(executor, futures):
             with state_lock:
-                if len(self.test_cases) >= self.num or retry >= self.max_retry:
+                outstanding = len(self.test_cases) + len(futures)
+                if outstanding >= self.num or retry >= self.max_retry:
                     return False
                 history_string = __history_to_string(history) if history else None
             future = executor.submit(_generate_candidate, history_string)
@@ -387,7 +321,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                 for fut in done:
                     futures.remove(fut)
                     try:
-                        response, response2, ret = fut.result()
+                        response, ret = fut.result()
                     except Exception as exc:
                         logging.exception("Oracle result generation worker failed", exc_info=exc)
                         with state_lock:
@@ -400,9 +334,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                     appended_to_history = False
                     try:
                         with state_lock:
-                            self._validate_test_fixture(response)
-                            response2["data"] = response.get("data") # append data instances into response2 for history duplicate validation 
-                            self._validate_test_fixture2(response2, history)
+                            self._validate_test_fixture(response, history)
                             history.append(ret.test_fixtures)
                             appended_to_history = True
                             self.test_cases.append(self._form_instance(len(self.test_cases), ret))

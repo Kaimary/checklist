@@ -70,7 +70,8 @@ class MarkDownOutputParser(BaseOutputParser):
 
 class OracleDataGenerationOutput(BaseModel):
     """Model for oracle data generation output."""
-    database_instances: Dict[str, Any] = Field(description="The generated data instances based on the database schema")
+    data: Dict[str, Any] = Field(description="The generated data instances based on the database schema")
+    result: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
 
 class NoiseDataInjectionOutput(BaseModel):
     """Model for oracle data generation output."""
@@ -80,14 +81,14 @@ class NoiseDataInjectionOutput(BaseModel):
 #     """Model for repairing injected noise rows."""
 #     fixed_rows: Dict[str, Any] = Field(description="Corrected noise data rows keyed by table name")
 
-class OracleDataVerificationOutput(BaseModel):
-    """Model for oracle data verification output."""
-    chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
-    resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
+# class OracleDataVerificationOutput(BaseModel):
+#     """Model for oracle data verification output."""
+#     chain_of_thought_reasoning: str = Field(description="Your thought process on how you think.")
+#     resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
 
-class OracleResultCheckingOutput(BaseModel):
-    """Model for oracle result checking output."""
-    resulting_data: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
+# class OracleResultCheckingOutput(BaseModel):
+#     """Model for oracle result checking output."""
+#     result: Dict[str, Any] = Field(description="The expected resulting data queried by the given natural language over the given databse schema")
 
 class QueryRelaxingOutput(BaseModel):
     """Model for query relaxing constraint generation output."""
@@ -135,9 +136,9 @@ def get_parser(parser_name: str) -> BaseOutputParser:
     """
     parser_configs = {
         "nl2sql_translation": MarkDownOutputParser,
-        "simulate_db_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
-        "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataVerificationOutput),
-        "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
+        # "simulate_db_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
+        "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
+        # "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
         # "nl_relaxing_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         # "nl_strengthening_generation": lambda: JsonOutputParser(pydantic_object=QueryRelaxingOutput),
         # "nl_mutation_generation": MarkDownOutputParser,
