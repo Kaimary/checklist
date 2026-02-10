@@ -25,6 +25,7 @@ class SemanticCheckTester(BaseTester):
         ret.results.warnings = [bug for bug in ret.test_fixtures.bugs if type(bug) != str and bug.level == BugLevel.WARNING]
         ret.results.pred = [bug for bug in ret.test_fixtures.bugs if type(bug) == str or bug.level == BugLevel.ERROR]
         ret.results.standard = "pred is empty"
+        ret.results.target = None
         passed = self._compare_query_results(ret.results.pred)
         return passed, ret.test_fixtures, ret.results, None, ret.trace
     
@@ -83,8 +84,8 @@ class SemanticCheckTester(BaseTester):
         # Hard-code for spider to ignore `column type mismathes aggregation` bugs
         if "spider" in self.db_path: bugs = [bug for bug in bugs if not isinstance(bug, str) and "but function" not in bug.description]
         for bug in bugs:
-            trace += "\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug))
-            logging.info("\nBugs found:\n{}".format("\n".join(bug.description if not isinstance(bug, str) else bug)))
+            trace += f"\nBugs found:\n{bug.description if not isinstance(bug, str) else bug}"
+            logging.info(f"\nBugs found:\n{bug.description if not isinstance(bug, str) else bug}")
         ret.trace = trace
         ret.test_fixtures.bugs = bugs
         self.test_cases.append(self._form_instance(len(self.test_cases), ret))

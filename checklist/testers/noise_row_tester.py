@@ -226,7 +226,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
             )
             response, metadata = self.backbone(prompt, self.parser, request_kwargs={"QUESTION": self.nl, "HINT": self.hint})
             
-            self.call += 1
+            self.calls += 1
             self.token_used += metadata.get("token_used", 0)
 
             ret.avg_logprob = metadata.get("avg_logprob", None)

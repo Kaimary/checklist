@@ -214,6 +214,7 @@ class TestSuite:
         vote_true = 0
         vote_false = 0
         score = 0
+        cond_arr = []
         majority = len([t for t in self.tests.values() if t.__class__.__name__ not in HIGH_PRECISION_TESTERS]) / 2 + 1
         correct, incorrect = False, False
         break_triggered = False
@@ -225,7 +226,7 @@ class TestSuite:
                 return "❌"
             return "🤔"
 
-        status_state = OrderedDict((name, ("pending", None)) for name in self.tests.keys())
+        status_state = OrderedDict((name, ("pending", None, None, None, None)) for name in self.tests.keys())
         status_rendered = False
         render_lock = threading.Lock()
 
@@ -295,7 +296,7 @@ class TestSuite:
             status_state[name] = ("completed", _result_symbol(judgment), calls, tokens_used, elapsed)
             _print_status_block()
             last_tester = t.__class__.__name__
-            confidence = None
+            confidence = 0
             if isinstance(judgment, bool):
                 judgments.append(judgment)
                 if t.__class__.__name__ not in HIGH_PRECISION_TESTERS:
@@ -307,7 +308,9 @@ class TestSuite:
                     signs = np.where(passed, 1, -1)
                     confidence = abs(np.mean(probs * signs)) # confidence magnitude
                     score += confidence if judgment else -1 * confidence
-                    
+
+            cond_arr.append(confidence)
+
             ret[name] = {
                 "judgment": judgment,
                 "total": len(passed),
@@ -318,7 +321,8 @@ class TestSuite:
                 "tokens_used": tokens_used,
                 "calls": calls,
                 "criteria": criteria,
-                "traces": traces
+                "traces": traces,
+                "elapsed": elapsed
             }
             stop_due_to = None
             if t.__class__.__name__ in HIGH_PRECISION_TESTERS and judgment is False:
@@ -355,7 +359,7 @@ class TestSuite:
         elif not judgments:
             ret["final_judgment"] = "UNDETERMINED"
         else:
-            if verbose and len(self.tests.keys()) > 1: print("TIE (no clear correct or incorrect decision), use confidence")
+            if verbose and len(self.tests.keys()) > 1: print(f"TIE (no clear correct or incorrect decision), use confidences ({cond_arr})")
             ret["final_judgment"] = True if score > 0 else False
         if verbose:
             print()
@@ -427,8 +431,9 @@ class TestSuite:
             if baseline_evaluation and not test_evaluation:
                 print(f"\033[92mBeat Baseline? ❌\033[0m")
                 print(f"\033[92m[info] \033[0mTotal Test Cases: {v['total']}, Passed: {v['passed']}, Criteria: {v['criteria']}")
-                print(f"\033[92m[trace]\033[0m")
-                print(v['traces'][0])
+                if v['traces']:
+                    print(f"\033[92m[trace]\033[0m")
+                    print(v['traces'][0])
             print()
 
     def visual_summary_by_test(self, testname):

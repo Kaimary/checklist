@@ -2,9 +2,9 @@
 You are a data science expert.
 Below, you are presented with a database schema, a question (with hint if applicable) and a SQL query.
 Your task is to:
-- Follow the Rubber Duck Debugging method to examine the sub-queries step by step, using the provided intermediate executions.
-- Verify whether the semantics and execution outcomes at each step align with the question.
-- Determine the SQL query's correctness and provide the judgement.
+- Follow the Rubber Duck Debugging method to examine the sub-queries step by step, using the provided intermediate executions as supporting evidence.
+- Evaluate whether the given SQL query is correct based on EXECUTION EQUIVALENCE, and provide the judgement.
+- Minor semantic differences are acceptable as long as they do NOT change the final result.
 
 Here is the input:
 
@@ -28,7 +28,7 @@ Intermediate Sub-SQL Executions (each showing up to 5 resulting rows):
 Please respond with a valid JSON object structured as follows:
 {% raw %}
 {
-    "chain_of_thought_reasoning": "Your rubber duck debugging process. Keep the analysis concise!",
+    "chain_of_thought_reasoning": "Your rubber duck debugging process to examine each sub-query. Keep the analysis short!",
     "judgment": true or false (true means the SQL is correct, false means the SQL is incorrect)
 }
 {% endraw %}

@@ -60,7 +60,7 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
             random.shuffle(order)
             # always make `SELECT ... FROM ...` subsql as the first one to ensure each subsqls executable
             active = {"SELECT", "FROM"}
-            sql = " ".join(query.clauses[name].sql_str for name in active)
+            sql = " ".join(query.clauses[name].sql_str for name in Query._check_order if name in active)
             sub_sqls = [sql]
 
             for clause in order:
