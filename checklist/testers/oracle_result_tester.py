@@ -100,6 +100,8 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target, do_math=is_sql_do_math(self.sql))
+        # clean up
+        os.remove(ret.test_fixtures.db)
         return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
 
     def _validate_test_fixture(self, response, history):
@@ -244,10 +246,8 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                 shutil.copy2(snapshot_path, ret.test_fixtures.db)
             else:
                 create_sqlite_database(ret.test_fixtures.db, self.schema_string)
-        for t, rows in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
-        # # test case serialization
-        # self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-        #     database=ret.test_fixtures.db, sql=self.sql, expect=ret.test_fixtures.oracle)
+        for t, rows in ret.test_fixtures.data.items(): 
+            insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=rows)
         
         return ret
 

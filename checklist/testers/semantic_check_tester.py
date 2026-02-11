@@ -52,12 +52,6 @@ class SemanticCheckTester(BaseTester):
         TEST_INSTANCE_ROOT_PATH = os.path.join(self.instance_saved_path, f"{idx}")
         os.makedirs(TEST_INSTANCE_ROOT_PATH, exist_ok=True)
         
-        # Create test data test_cases
-        ret.test_fixtures.db = os.path.join(TEST_INSTANCE_ROOT_PATH, f"{self.db_id}.sqlite")
-        # test case serialization
-        self.write_test_fixture_file(output_dir=TEST_INSTANCE_ROOT_PATH, 
-            database=ret.test_fixtures.db, sql=self.sql, bugs=ret.test_fixtures.bugs)
-        
         return ret
     
     def _generator(self):

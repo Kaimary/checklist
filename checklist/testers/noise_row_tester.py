@@ -47,6 +47,8 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
         passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        # clean up
+        os.remove(ret.test_fixtures.db)
         return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
     
     def _validate_test_fixture(self, response, history):
@@ -197,7 +199,8 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                 logging.warning("Pruned schema snapshot unavailable; rebuilding synchronously for NoiseRowTester.")
                 create_sqlite_database(ret.test_fixtures.db, self.schema_string)
                 self._copy_rows_into_pruned_db(ret.test_fixtures.db, self.schema)
-        for t, row in ret.test_fixtures.data.items(): insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
+        for t, row in ret.test_fixtures.data.items(): 
+            insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
         
         return ret
     
