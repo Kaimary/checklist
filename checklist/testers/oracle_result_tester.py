@@ -33,7 +33,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string)
 
-    def _compare_query_results(self, preds, oracles, do_math=False):
+    def _compare_query_results(self, preds, oracles, both_empty=False, do_math=False):
         def __normalize_scalar(value):
             if isinstance(value, bool):
                 return value
@@ -76,9 +76,9 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                 if oracle_row[i:i+n] == pred:
                     return True
             return False
-        # if the simulated database can't execute the sql (both empty-results), most probably the simulated database made something wrong...
+        # if the simulated database can't execute pred sql (but original database can), most probably the simulated database made something wrong...
         # in this case, make it pass to avoid high false negative rate
-        if not preds or not oracles: return True
+        if not oracles or (not preds and not both_empty): return True
         if do_math and preds[0] == (None,): return True
         if len(set(preds)) != len([tuple(x) for x in oracles]): return False
 
@@ -96,10 +96,21 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         res = validate_sql_query(ret.test_fixtures.db, self.sql, max_returned_rows="all")
         logging.info(f"Validating SQL: {self.sql}")
         ret.results.pred = res['RESULT'] if res['STATUS'] == 'OK' else None
+        # if empty result both observed in original db and simulated db, mostly making some mistake
+        both_empty = False
+        if ret.results.pred == []:
+            res1 = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
+            if res1['STATUS'] == 'OK' and res1['RESULT'] == []:
+                both_empty = True
         ret.results.target = ret.test_fixtures.oracle["rows"] if "rows" in ret.test_fixtures.oracle.keys() else []
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
         ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target, do_math=is_sql_do_math(self.sql))
+        passed = self._compare_query_results(
+            ret.results.pred, 
+            ret.results.target, 
+            both_empty=both_empty,
+            do_math=is_sql_do_math(self.sql)
+        )
         # clean up
         os.remove(ret.test_fixtures.db)
         return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
