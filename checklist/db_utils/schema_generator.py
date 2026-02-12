@@ -233,7 +233,7 @@ class DatabaseSchemaGenerator:
         for table_name, table_schema in self.schema_structure.tables.items():
             keys_info[table_name] = get_primary_keys(table_schema) or []
             for column_name, column_info in table_schema.columns.items():
-                if column_info.foreign_keys:
+                if column_info.foreign_keys and column_name not in keys_info[table_name]:
                     keys_info[table_name].append(column_name)
       
         return keys_info

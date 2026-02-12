@@ -66,21 +66,6 @@ class SchemaPruningMixin:
         return f'"{escaped}"'
 
     def _validate_pruned_schema(self, response):
-        def __extract_column_name(column_def):
-            pattern = r'''
-                (["'])(.*?)\1 |  # Double/single quoted strings
-                (`)(.*?)`      |  # Backtick quoted strings  
-                (\w+)             # Plain words
-            '''
-            match = re.search(pattern, column_def, re.VERBOSE)
-            if match:
-                if match.group(1):
-                    return match.group(2)
-                if match.group(3):
-                    return match.group(4)
-                if match.group(5):
-                    return match.group(5)
-            return None
         if not response or not isinstance(response, dict):
             raise ValidationError("Pruned schema type checking failed.")
 
@@ -104,12 +89,6 @@ class SchemaPruningMixin:
                         f"Pruned schema column name checking failed. "
                         f"Column `{col}` should not in table `{table_name}`❌"
                     )
-            for column_def in definitions:
-                column_def = column_def.strip()
-                if "primary key" in column_def.lower():
-                    pk_column_name = __extract_column_name(column_def)
-                    if pk_column_name not in response[table_name]:
-                        response[table_name].insert(0, pk_column_name)
 
     def _copy_rows_into_pruned_db(self, target_db_path, schema_subset):
         dest_conn = sqlite3.connect(target_db_path)
@@ -276,9 +255,13 @@ class SchemaPruningMixin:
             db_id=self.db_id,
             db_path=self.db_path
         )
-        for k, v in schema_generator.get_all_primary_foreign_keys().items():
-            if k.lower() not in kept.keys(): kept[k.lower()] = v
-            else: kept[k.lower()].extend(v)
+        for k, cols in schema_generator.get_all_primary_foreign_keys().items():
+            if k.lower() not in kept.keys(): 
+                kept[k.lower()] = cols
+            else: 
+                for col in cols:
+                    if col.lower() not in kept[k.lower()] and col not in kept[k.lower()]: 
+                        kept[k.lower()].append(col)
         schema, schema_pruned = self._prune_schema_if_needed(
             schema=schema,
             threshold=threshold,
