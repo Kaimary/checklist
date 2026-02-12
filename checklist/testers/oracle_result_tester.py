@@ -79,7 +79,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         # if the simulated database can't execute pred sql (but original database can), most probably the simulated database made something wrong...
         # in this case, make it pass to avoid high false negative rate
         if not oracles or (not preds and not both_empty): return True
-        if do_math and preds[0] == (None,): return True
+        if do_math and preds and preds[0] == (None,): return True
         if len(set(preds)) != len([tuple(x) for x in oracles]): return False
 
         preds_frozen = [__freeze(p) for p in preds]

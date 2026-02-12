@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.red.parser.red_parser import Query
-from checklist.base_tester import SchemaPruningMixin, BaseTester
+from checklist.base_tester import SchemaPruningMixin, BaseTester, ValidationError
 from checklist.db_utils.execution import validate_sql_query
 
 class QueryReviewTester(SchemaPruningMixin, BaseTester):
@@ -36,7 +36,29 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
         ret.results.standard = "pred == target"
         passed = ret.results.pred
         return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
+    
+    def _validate_test_fixture(self, response):
+        def __output_format_check(response):
+            if not isinstance(response, dict):
+                raise ValidationError(
+                    f"Output format(type) check failed. "
+                    f"response type: {type(response)}, "
+                    f"Expected type: dict"
+                )
+            if "judgment" not in response.keys():
+                raise ValidationError(
+                    f"Output format(key) check failed. "
+                    f"Keys found in response: {','.join(response.keys())}, "
+                    f"Expected keys: `judgment`"
+                )
+            return True
         
+        # output format check
+        __output_format_check(response)
+
+        return
+
+
     def _form_instance(self, idx, ret):
         """
         Form each single test case, and save related test fixture for serialization. 
@@ -71,17 +93,19 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
                     if name in active
                 )
                 sub_sqls.append(sql.strip())
-            # for i, s in enumerate(sub_sqls, 1):
-            #     print(f"sub-sqls{i}: {s}")
             return sub_sqls
         def _format_sub_sqls_with_results(sub_sqls):
-            output = ""
+            final_sql_output, output = "", ""
             for idx, sub_sql in enumerate(sub_sqls, 1):
-                exec = validate_sql_query(self.db_path, sub_sql, max_returned_rows=5)
+                exec = validate_sql_query(self.db_path, sub_sql, max_returned_rows=10)
                 preview = exec.get("RESULT")
+                note = f"(showing first 5 rows)" if isinstance(preview, list) and len(preview) > 5 else ""
                 err = "[Error]" if isinstance(preview, str) else ""
-                output += f"Sub-SQL{idx}: {sub_sql}\nExecution: {err}{preview}\n"
-            return output
+                if idx == len(sub_sqls):
+                    final_sql_output = f"Execution{note}: {err}{preview[:5]}"
+                else: 
+                    output += f"Sub-SQL{idx}: {sub_sql}\nExecution{note}: {err}{preview[:5]}\n"
+            return final_sql_output, output
         def _prepare_subsql_context():
             try:
                 parsed_query = Query(self.sql, copy.deepcopy(self.red_schema))
@@ -94,7 +118,7 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
             ret = Munch()
             ret.test_fixtures = Munch()
             trace = "->>Parallel Test Case Tracelog<<-\n"
-            subsql_context = _prepare_subsql_context()
+            res, subsql_context = _prepare_subsql_context()
             response, metadata = self.backbone(
                 self.prompt,
                 self.parser,
@@ -102,6 +126,7 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
                     "HINT": self.hint,
                     "QUESTION": self.nl,
                     "SQL": self.sql,
+                    "RESULT": res,
                     "SUBSQLS": subsql_context
                 }
             )
@@ -114,7 +139,7 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
             trace += f"{response.get('chain_of_thought_reasoning', '')}\n"
             trace += f"{response.get('judgment', '')}"
             ret.trace = trace
-            return ret
+            return response, ret
 
         retry = 0
         state_lock = threading.Lock()
@@ -141,19 +166,39 @@ class QueryReviewTester(SchemaPruningMixin, BaseTester):
                 for fut in done:
                     futures.remove(fut)
                     try:
-                        ret = fut.result()
+                        response, ret = fut.result()
                     except Exception as exc:
                         logging.warning(f"Query review test case generation failed: {exc}")
-                        retry += 1
-                        # if verbose:
-                        #     spinner.set_message(f"Generation failed (attempt {retry}/{self.max_retry})...")
-                    else:
                         with state_lock:
-                            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+                            retry += 1
                             # if verbose:
-                            #     spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            #     spinner.set_message(f"Test fixture generation failed (attempt {retry}/{self.max_retry})...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+                        continue
+                    
+                    try:
+                        with state_lock:
+                            self._validate_test_fixture(response)
+                            self.test_cases.append(self._form_instance(len(self.test_cases), ret))
+                            # spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+                            if stop_generation: break
+                    except ValidationError as e:
+                        with state_lock:
+                            retry += 1
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
+                        logging.warning(f"Test fixture validation failed: {e}")
+                    except Exception as err:
+                        with state_lock:
+                            retry += 1
+                            # if verbose:
+                            #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                        logging.exception("Failed to materialize test instance", exc_info=err)
 
-                    stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+                    with state_lock:
+                        stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+
                     if stop_generation:
                         break
 

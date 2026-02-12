@@ -22,7 +22,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--schema_file_path', type=str, required=True, default='')
     args_parser.add_argument('--nl2sql_model_name', type=str)
     args_parser.add_argument('--predicted_sql_path', type=str)
-    args_parser.add_argument('--evaluation_only', action='store_true')
+    args_parser.add_argument('--eval_mode', action='store_true')
     args_parser.add_argument('--append_mode', action='store_true')
     args_parser.add_argument('--debug', action='store_true')
     args = args_parser.parse_args()
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     if args.append_mode and os.path.exists(output_file_path):
         start_idx = sum(1 for _ in open(output_file_path))
         data = data[start_idx:]
-    if args.evaluation_only:
+    if args.eval_mode:
         run_evalution(judge_name=args.judge_name, benchmark_name=args.benchmark_name,
                       judgment_file_path=output_file_path, data_file_path=args.data_file_path, 
                       db_root_path=args.db_root_path, predicted_sql_path=args.predicted_sql_path)

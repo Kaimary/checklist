@@ -339,6 +339,8 @@ class BaseTester(ABC):
     def reset(self):
         self.token_used = 0
         self.calls = 0
+        if getattr(self, "_pruned_db_snapshot_path", None) and os.path.exists(self._pruned_db_snapshot_path):
+            os.remove(self._pruned_db_snapshot_path)
 
     @abstractmethod
     def _test_fn(self, ret):
