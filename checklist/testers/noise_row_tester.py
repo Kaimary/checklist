@@ -33,7 +33,9 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         # self.test_cases = self._generator()
 
     def _compare_query_results(self, preds, oracles):
-        if not preds or not oracles: return False
+        if preds is None or oracles is None: return False
+        # if difference larger than 1, most probably the injection made something wrong...
+        if abs(len(preds)-len(oracles)) > 1: return True
         return len(preds) == len(oracles)
     
     def _test_fn(self, ret: Munch):

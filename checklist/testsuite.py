@@ -214,6 +214,7 @@ class TestSuite:
         vote_true = 0
         vote_false = 0
         score = 0
+        veto = False
         cond_arr = []
         majority = len([t for t in self.tests.values() if t.__class__.__name__ not in HIGH_PRECISION_TESTERS]) / 2 + 1
         correct, incorrect = False, False
@@ -308,6 +309,8 @@ class TestSuite:
                     signs = np.where(passed, 1, -1)
                     confidence = abs(np.mean(probs * signs)) # confidence magnitude
                     score += confidence if judgment else -1 * confidence
+                else:
+                    veto = judgment
 
             cond_arr.append(confidence)
 
@@ -360,9 +363,10 @@ class TestSuite:
             ret["final_judgment"] = "UNDETERMINED"
         else:
             if verbose and len(self.tests.keys()) > 1: print(f"TIE (no clear correct or incorrect decision), use confidences ({cond_arr})")
-            ret["final_judgment"] = True if score > 0 else False
-        if verbose:
-            print()
+            if score == 0: 
+                ret["final_judgment"] = veto
+            else: 
+                ret["final_judgment"] = True if score > 0 else False
         return ret, munch
 
     def summary(self, types=None, capabilities=None, **kwargs):
