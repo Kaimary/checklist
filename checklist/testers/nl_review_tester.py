@@ -82,14 +82,23 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
             retry = 0
             paraphrases = [self.nl]
             while len(paraphrases) < self.num and retry < self.max_retry:
-                response, metadata = self.backbone(
-                    self.prompt, 
-                    self.parser, 
-                    request_kwargs={
-                        "HINT": self.hint, 
-                        "QUESTION": self.nl, 
-                        "SQL": self.sql,
-                        "NUM": self.num - 1})
+                try:
+                    response, metadata = self.backbone(
+                        self.prompt,
+                        self.parser,
+                        request_kwargs={
+                            "HINT": self.hint,
+                            "QUESTION": self.nl,
+                            "SQL": self.sql,
+                            "NUM": self.num - 1,
+                        },
+                    )
+                except Exception as exc:
+                    retry += 1
+                    logging.warning(
+                        f"Paraphrase generation failed (attempt {retry}/{self.max_retry}): {exc}"
+                    )
+                    continue
                 
                 self.calls += 1
                 self.token_used += metadata.get("token_used", 0)
@@ -97,64 +106,70 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
                 try:
                     self._validate_test_fixture(response)
                 except ValidationError as e:
-                    attempts += 1
-                    logging.warning(f"Paraphrase validation failed (attempt {attempts}/{self.max_retry}): {e}")
+                    retry += 1
+                    logging.warning(
+                        f"Paraphrase validation failed (attempt {retry}/{self.max_retry}): {e}"
+                    )
+                    continue
+                if not isinstance(response.get("paraphrases", None), list) or not response["paraphrases"]:
+                    retry += 1
+                    logging.warning(
+                        f"Paraphrase output missing/empty (attempt {retry}/{self.max_retry})."
+                    )
                     continue
                 paraphrases.extend(response["paraphrases"])
-            return paraphrases
+            return paraphrases[: self.num]
         def _generate_candidate(paraphrase):
-            attempts = 0
-            last_exc = None
-            while attempts < self.max_retry:
-                attempts += 1
-                try:
-                    ret = Munch()
-                    ret.test_fixtures = Munch()
-                    trace = f"->>Parallel Test Case Tracelog<<-\n"
-                    response, metadata = self.backbone(
-                        self.prompt2,
-                        self.parser2,
-                        request_kwargs={
-                            "HINT": self.hint, 
-                            "QUESTION": paraphrase, 
-                            "SQL": self.sql,
-                            "RESULT": '\n'.join(f'{tup}' for tup in preview) \
-                                if isinstance(preview, list) else preview},
-                    )
+            ret = Munch()
+            ret.test_fixtures = Munch()
+            trace = f"->>Parallel Test Case Tracelog<<-\n"
+            response, metadata = self.backbone(
+                self.prompt2,
+                self.parser2,
+                request_kwargs={
+                    "HINT": self.hint,
+                    "QUESTION": paraphrase,
+                    "SQL": self.sql,
+                    "RESULT": "\n".join(f"{tup}" for tup in preview)
+                    if isinstance(preview, list)
+                    else preview,
+                },
+            )
 
-                    self.calls += 1
-                    self.token_used += metadata.get("token_used", 0)
+            self.calls += 1
+            self.token_used += metadata.get("token_used", 0)
 
-                    ret.avg_logprob = metadata.get("avg_logprob", None)
-                    ret.test_fixtures.turns = response
-                    trace += (
-                        f"{response['chain_of_thought_reasoning']} -> "
-                        f"{response['judgment']}\n"
-                    )
-                    ret.trace = trace
-                    return ret
-                except Exception as exc:
-                    last_exc = exc
-                    logging.warning(
-                        f"NL review test case generation failed (attempt {attempts}/{self.max_retry}): {exc}"
-                    )
-            if last_exc:
-                raise last_exc
-            raise RuntimeError("NL review paraphrase generation failed without exception.")
+            ret.avg_logprob = metadata.get("avg_logprob", None)
+            ret.test_fixtures.turns = response
+            trace += f"{response['chain_of_thought_reasoning']} -> {response['judgment']}\n"
+            ret.trace = trace
+            return ret
 
         paraphrases = _prepare_paraphrases()
         exec = validate_sql_query(self.db_path, self.sql, max_returned_rows=5)
         preview = exec.get("RESULT")
         # spinner = Spinner(f"Generating test cases of `{self.name}` ...")
+        retry = 0
         state_lock = threading.Lock()
         paraphrase_queue = deque(paraphrases)
+        paraphrase_attempts = {}  # paraphrase -> num submissions
         futures = {}
 
         def submit_task(executor):
+            nonlocal retry
             with state_lock:
-                if not paraphrase_queue:
+                outstanding = len(self.test_cases) + len(futures)
+                if outstanding >= self.num or retry >= self.max_retry:
                     return False
-                paraphrase = paraphrase_queue.popleft()
+                paraphrase = None
+                while paraphrase_queue:
+                    cand = paraphrase_queue.popleft()
+                    if paraphrase_attempts.get(cand, 0) < self.max_retry:
+                        paraphrase = cand
+                        break
+                if paraphrase is None:
+                    return False
+                paraphrase_attempts[paraphrase] = paraphrase_attempts.get(paraphrase, 0) + 1
             future = executor.submit(_generate_candidate, paraphrase)
             futures[future] = paraphrase
             return True
@@ -164,27 +179,40 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
                 if not submit_task(executor):
                     break
 
-            while futures and len(self.test_cases) < self.num:
+            stop_generation = False
+            while futures and not stop_generation:
                 done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
                 for fut in done:
                     paraphrase = futures.pop(fut)
                     try:
                         case_ret = fut.result()
                     except ValidationError as e:
-                        logging.warning(f"NL review test fixture validation failed: {e}")
                         with state_lock:
-                            paraphrase_queue.append(paraphrase)
+                            retry += 1
+                            if retry < self.max_retry and paraphrase_attempts.get(paraphrase, 0) < self.max_retry:
+                                paraphrase_queue.append(paraphrase)
+                        logging.warning(
+                            f"NL review test fixture validation failed (attempt {retry}/{self.max_retry}): {e}"
+                        )
                     except Exception as exc:
-                        logging.warning(f"NL review test case generation failed: {exc}")
                         with state_lock:
-                            paraphrase_queue.append(paraphrase)
+                            retry += 1
+                            if retry < self.max_retry and paraphrase_attempts.get(paraphrase, 0) < self.max_retry:
+                                paraphrase_queue.append(paraphrase)
+                        logging.warning(
+                            f"NL review test case generation failed (attempt {retry}/{self.max_retry}): {exc}"
+                        )
                     else:
                         with state_lock:
                             self.test_cases.append(self._form_instance(len(self.test_cases), case_ret))
                             # if verbose:
                             #     spinner.set_message(f"Generated {len(outputs)} test cases ...")
 
-                    if len(self.test_cases) >= self.num:
+                    with state_lock:
+                        stop_generation = (
+                            len(self.test_cases) >= self.num or retry >= self.max_retry
+                        )
+                    if stop_generation:
                         break
 
                     submit_task(executor)

@@ -103,7 +103,7 @@ def insert_rows_into_table(db_path, table_name, rows):
         table_name (str): Name of the table to insert data into.
         rows (list of tuples): List of data rows to insert. Each row should be a tuple.
     """
-    if not rows: return
+    if not rows: return "empty data"
 
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -118,8 +118,11 @@ def insert_rows_into_table(db_path, table_name, rows):
         conn.commit()
     except sqlite3.Error as e:
         print(f"SQLite error: {e}")
+        return f"{e}"
     finally:
         conn.close()
+    
+    return None
 
 def create_sqlite_database(db_path, schema_string):
     """

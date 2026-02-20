@@ -7,7 +7,7 @@ from sqlglot.optimizer.qualify import qualify
 from .execution import execute_sql
 from .db_info import get_table_all_columns, get_db_all_tables
 
-def is_sql_do_math(sql: str) -> bool:
+def is_sql_do_math(sql: str, include_count=False) -> bool:
     """
     Checks if the SQL query performs math operations such as AVG/SUM or +, -, *, /.
     
@@ -16,7 +16,8 @@ def is_sql_do_math(sql: str) -> bool:
     """
     try:
         parsed_sql = parse_one(sql, read='sqlite')
-        math_aggs = {"AVG", "SUM"}
+        math_aggs = {"AVG", "SUM", "MIN", "MAX"}
+        if include_count: math_aggs.add("COUNT")
         math_expressions = (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod)
 
         first_select = next(parsed_sql.find_all(exp.Select), None)
@@ -37,6 +38,71 @@ def is_sql_do_math(sql: str) -> bool:
         return False
     except Exception as e:
         logging.critical(f"Error in is_sql_do_math: {e}\nSQL: {sql}")
+        raise e
+
+def is_sql_to_cast(sql: str, include_subqueries: bool = False) -> bool:
+    """
+    Checks whether the SQL query uses CAST(...) in the SELECT projection list.
+
+    Args:
+        sql (str): The SQL query string.
+        include_subqueries (bool): If True, checks all SELECTs including subqueries/CTEs.
+            If False, only checks the outermost SELECT.
+    """
+    try:
+        parsed_sql = parse_one(sql, read="sqlite")
+        selects = list(parsed_sql.find_all(exp.Select))
+        if not selects:
+            return False
+
+        def _select_has_cast(sel: exp.Select) -> bool:
+            for select_exp in sel.expressions:
+                expression_body = select_exp.this if isinstance(select_exp, exp.Alias) else select_exp
+                if isinstance(expression_body, exp.Cast):
+                    return True
+                if next(expression_body.find_all(exp.Cast), None) is not None:
+                    return True
+            return False
+
+        if include_subqueries:
+            return any(_select_has_cast(sel) for sel in selects)
+        return _select_has_cast(selects[0])
+    except Exception as e:
+        logging.critical(f"Error in is_sql_to_cast: {e}\nSQL: {sql}")
+        raise e
+
+def is_sql_use_join(sql: str, include_subqueries: bool = False) -> bool:
+    """
+    Checks whether the SQL uses JOINs in the FROM clause.
+
+    Note:
+        sqlglot represents both explicit JOIN syntax (e.g., "FROM a JOIN b ...") and
+        comma-separated tables (e.g., "FROM a, b") via Join nodes, so this function
+        treats both forms as "uses join".
+
+    Args:
+        sql (str): The SQL query string.
+        include_subqueries (bool): If True, checks JOIN usage anywhere in the query (including subqueries/CTEs).
+            If False, only checks JOIN usage in top-level SELECT statements (excluding subqueries/CTEs).
+    """
+    try:
+        parsed_sql = parse_one(sql, read="sqlite")
+
+        if include_subqueries:
+            return next(parsed_sql.find_all(exp.Join), None) is not None
+
+        # "Top-level" here means: not under a Subquery and not inside a CTE definition.
+        def _is_top_level_select(sel: exp.Select) -> bool:
+            return sel.find_ancestor(exp.Subquery) is None and sel.find_ancestor(exp.CTE) is None
+
+        for sel in parsed_sql.find_all(exp.Select):
+            if not _is_top_level_select(sel):
+                continue
+            if sel.args.get("joins"):
+                return True
+        return False
+    except Exception as e:
+        logging.critical(f"Error in is_sql_use_join: {e}\nSQL: {sql}")
         raise e
 
 def get_sql_tables(db_path: str, sql: str) -> List[str]:
@@ -200,3 +266,46 @@ def get_sql_condition_literals(db_path: str, sql: str) -> Dict[str, Dict[str, Li
     except Exception as e:
         logging.critical(f"Error in get_sql_condition_literals: {e}\nSQL {sql}\n")
         return {}
+
+def is_sql_select_distinct(sql: str, include_subqueries: bool = False) -> bool:
+    """
+    Checks whether the SQL uses DISTINCT at the SELECT level (e.g., SELECT DISTINCT ... or SELECT DISTINCT ON ...).
+
+    Note:
+        This checks the DISTINCT modifier of SELECT, and intentionally does NOT treat
+        aggregate usage like COUNT(DISTINCT col) as "SELECT DISTINCT".
+
+    Args:
+        sql (str): The SQL query string.
+        include_subqueries (bool): If True, returns True if any SELECT (including subqueries/CTEs)
+            is DISTINCT. If False, only checks the outermost SELECT.
+    """
+    try:
+        parsed_sql = parse_one(sql, read="sqlite")
+        selects = list(parsed_sql.find_all(exp.Select))
+        if not selects:
+            return False
+        if include_subqueries:
+            return any(bool(sel.args.get("distinct")) for sel in selects)
+        return bool(selects[0].args.get("distinct"))
+    except Exception as e:
+        logging.critical(f"Error in is_sql_select_distinct: {e}\nSQL: {sql}")
+        raise e
+
+def is_sql_use_limit(sql: str, include_subqueries: bool = False) -> bool:
+    """
+    Checks whether the SQL uses a LIMIT clause.
+
+    Args:
+        sql (str): The SQL query string.
+        include_subqueries (bool): If True, returns True if any LIMIT exists anywhere in the query
+            (including subqueries/CTEs). If False, only checks the outermost query's LIMIT.
+    """
+    try:
+        parsed_sql = parse_one(sql, read="sqlite")
+        if include_subqueries:
+            return next(parsed_sql.find_all(exp.Limit), None) is not None
+        return bool(parsed_sql.args.get("limit"))
+    except Exception as e:
+        logging.critical(f"Error in is_sql_use_limit: {e}\nSQL: {sql}")
+        raise e

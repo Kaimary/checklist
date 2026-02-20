@@ -3,7 +3,9 @@ You are given the database schema (sample data), the natural language (NL) quest
 
 You task is:
 - Read and understand the schema and the NL question.
-- Inject ONE realistic but irrelevant data row that does not affect the correct answer to the NL question.
+- Inject ONE realistic data row, which can be either 
+    - "relevant" (it is relevant to the query and should be included in the final answer), or 
+    - "irrelevant" (it is ierrelevant to the query and has no impact on the final answer).
 
 Attention: 
 - If the injected row contains a foreign key referencing another table, also inject the corresponding referenced row into that table.
@@ -27,7 +29,9 @@ Return ONLY a valid JSON object with following structure (keys and string values
     "injected_rows": {
         "table1": ["col_val1", "col_val2", ...]
         ...
-    }
+    },
+    "injection_type": "relevant" | "irrelevant",
+    "chain_of_thought_reasoning": "Explain briefly why the row(s) is relevant or irrelevant to the query."
 }
 {% endraw %}
 The injected_rows object may contain multiple tables if required by foreign key constraints.

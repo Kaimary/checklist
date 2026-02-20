@@ -4,10 +4,12 @@ import json
 import shutil
 import logging
 import threading
+from collections import Counter
 from munch import Munch
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 # from checklist.spinners import Spinner
+from checklist.db_utils.sql_parser import is_sql_do_math, is_sql_select_distinct, is_sql_to_cast, is_sql_use_join, is_sql_use_limit
 from checklist.parsers import get_parser
 from checklist.prompts import get_prompt
 from checklist.db_manager import DatabaseManager
@@ -21,22 +23,83 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
     def __init__(self):
         super().__init__("Noise Row Injection Tester", "metamorphic_noise", "metamorphic")
 
+    @staticmethod
+    def _results_multiset_equal(a, b, *, unordered_row: bool = False) -> bool:
+        """
+        Order-insensitive equality for SQL results, preserving duplicates.
+        Results are typically a list of tuples from sqlite3 cursor.fetchall().
+
+        Args:
+            a, b: SQL execution results (iterables of rows).
+            unordered_row: If True, treats each row as an unordered multiset of its elements
+                (so (1, "a") equals ("a", 1)). Use this only if you want to ignore
+                column/element order differences in upstream outputs.
+        """
+        def _make_hashable(x):
+            if isinstance(x, list):
+                return tuple(_make_hashable(i) for i in x)
+            if isinstance(x, tuple):
+                return tuple(_make_hashable(i) for i in x)
+            if isinstance(x, dict):
+                return tuple(sorted((k, _make_hashable(v)) for k, v in x.items()))
+            if isinstance(x, set):
+                return tuple(sorted(_make_hashable(i) for i in x))
+            if isinstance(x, memoryview):
+                return x.tobytes()
+            try:
+                hash(x)
+                return x
+            except TypeError:
+                return repr(x)
+
+        try:
+            def _sort_key(v):
+                # Avoid direct comparisons across mixed types during sorting.
+                return (type(v).__name__, repr(v))
+
+            def _norm_row(r):
+                hr = _make_hashable(r)
+                if unordered_row and isinstance(hr, tuple):
+                    return tuple(sorted(hr, key=_sort_key))
+                return hr
+
+            return Counter([_norm_row(r) for r in a]) == Counter([_norm_row(r) for r in b])
+        except Exception:
+            return False
+
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.criteria=0.6
         self.num=3
         self.max_retry=self.num
         self.parallel_workers = self.num
+        self.err = ""
         self.parser = get_parser(parser_name="noise_data_injection")
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self._schedule_pruned_db_materialization(self.schema_string, copy_existing_rows=True)
         # self.test_cases = self._generator()
 
-    def _compare_query_results(self, preds, oracles):
+    def _compare_query_results(self, preds, oracles, type="relevant", 
+                               do_cast=False, do_math=False, do_distinct=False, do_limit=False, do_join_but_add_one=False):
         if preds is None or oracles is None: return False
-        # if difference larger than 1, most probably the injection made something wrong...
-        if abs(len(preds)-len(oracles)) > 1: return True
-        return len(preds) == len(oracles)
+        # if difference larger than one or error observed during db creation, most probably the injection made something wrong...
+        if abs(len(preds)-len(oracles)) > 1 or getattr(self, "err", ""): return True
+
+        if type == "relevant":
+            # handling corner cases to ensure high precision:
+            # case#1: distinct/cast semantics
+            # case#2: limit semantics
+            # case#3: math semantics may not change len, so require at least one value change.
+            # case#4: doing join but only add one-table data (most probably made something wrong...)
+            if len(preds) == len(oracles):
+                if do_cast or do_math or do_distinct or do_limit or do_join_but_add_one: return True
+                return not self._results_multiset_equal(preds, oracles, unordered_row=True)
+            
+            return len(preds) - 1 == len(oracles)
+        elif type == "irrelevant":
+            return len(preds) == len(oracles)
+        
+        return True
     
     def _test_fn(self, ret: Munch):
         ret.results = Munch()
@@ -47,8 +110,20 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         res = validate_sql_query(self.db_path, self.sql, max_returned_rows="all")
         ret.results.target = res['RESULT'] if res['STATUS'] == 'OK' else None
         logging.info(f"Predicted Result: {ret.results.pred}, Target Result: {ret.results.target}")
-        ret.results.standard = "pred == target"
-        passed = self._compare_query_results(ret.results.pred, ret.results.target)
+        ret.results.standard = "abs(len(pred) - len(target)) == 1"
+        passed = self._compare_query_results(
+            ret.results.pred, 
+            ret.results.target, 
+            ret.test_fixtures.type,
+            do_cast=is_sql_to_cast(self.sql),
+            do_math=is_sql_do_math(self.sql),
+            do_distinct=is_sql_select_distinct(self.sql),
+            do_limit=is_sql_use_limit(self.sql),
+            do_join_but_add_one = (
+                is_sql_use_join(self.sql) 
+                and len(ret.test_fixtures.data) == 1
+            )
+        )
         # clean up
         os.remove(ret.test_fixtures.db)
         return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
@@ -61,11 +136,11 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                     f"response type: {type(response)}, "
                     f"Expected type: dict"
                 )
-            if "injected_rows" not in response.keys():
+            if "injected_rows" not in response.keys() or "injection_type" not in response.keys():
                 raise ValidationError(
                     f"Output format(key) check failed. "
                     f"Keys found in response: {','.join(response.keys())}, "
-                    f"Expected keys: `injected_rows`"
+                    f"Expected keys: `injected_rows` | `injection_type`"
                 )
             return True
         def __schema_data_alignment_check(response, tables, column_types, schema):
@@ -202,8 +277,8 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                 create_sqlite_database(ret.test_fixtures.db, self.schema_string)
                 self._copy_rows_into_pruned_db(ret.test_fixtures.db, self.schema)
         for t, row in ret.test_fixtures.data.items(): 
-            insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
-        
+            res = insert_rows_into_table(ret.test_fixtures.db, table_name=t, rows=[row])
+            if res: self.err = res
         return ret
     
     def _generator(self, verbose=True):
@@ -237,7 +312,11 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
             ret.avg_logprob = metadata.get("avg_logprob", None)
             ret.test_fixtures.data = response.get("injected_rows", {}) or None
             if ret.test_fixtures.data:
-                trace += f"[injected rows]: {response.get('injected_rows', '')}"
+                trace += f"[injected rows]: {response.get('injected_rows', '')}\n"
+            ret.test_fixtures.type = response.get("injection_type", {}) or None
+            if ret.test_fixtures.type:
+                trace += f"[injected type]: {response.get('injection_type', '')}\n"
+                trace += f"[reasoning]: {response.get('chain_of_thought_reasoning', '')}\n"
             ret.trace = trace 
             return response, ret
 
