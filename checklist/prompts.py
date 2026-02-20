@@ -51,6 +51,7 @@ def _get_prompt_template(template_name: str, **kwargs: Any) -> HumanMessagePromp
     """
     template_configs = {
         "nl2sql_translation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
+        "nl2sql_translation_with_example": {"input_variables": ["HINT", "QUESTION", "SQL"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "INVALIDS": kwargs.get("invalid_queries_string", "")}},
         # "simulate_db_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "VALUES": kwargs.get("columns_values_string", ""), "HISTORY": kwargs.get("history_string", "")}},
         "oracle_data_generation": {"input_variables": ["HINT", "QUESTION"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", ""), "VALUES": kwargs.get("columns_values_string", ""), "HISTORY": kwargs.get("history_string", "")}},
         # "oracle_result_checking": {"input_variables": ["HINT", "QUESTION", "INSTANCES", "RESULT1", "RESULT2"], "partial_variables": {"DATABASE_SCHEMA": kwargs.get("schema_string", "")}},

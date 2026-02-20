@@ -75,7 +75,9 @@ class OracleDataGenerationOutput(BaseModel):
 
 class NoiseDataInjectionOutput(BaseModel):
     """Model for oracle data generation output."""
-    injected_rows: Dict[str, Any] = Field(description="The injected noise data rows based on the database schema")
+    injected_rows: Dict[str, Any] = Field(description="The injected data rows based on the database schema")
+    injection_type: str = Field(description="The injected data rows are (ir)relevant to the query")
+    chain_of_thought_reasoning: str = Field(description="Your thought process.")
 
 # class NoiseDataAlignmentFixOutput(BaseModel):
 #     """Model for repairing injected noise rows."""
@@ -136,6 +138,7 @@ def get_parser(parser_name: str) -> BaseOutputParser:
     """
     parser_configs = {
         "nl2sql_translation": MarkDownOutputParser,
+        "nl2sql_translation_with_example": MarkDownOutputParser,
         # "simulate_db_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
         "oracle_data_generation": lambda: JsonOutputParser(pydantic_object=OracleDataGenerationOutput),
         # "oracle_result_checking": lambda: JsonOutputParser(pydantic_object=OracleResultCheckingOutput),
