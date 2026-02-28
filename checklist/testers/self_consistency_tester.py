@@ -20,7 +20,7 @@ class SelfConsistencyTester(SchemaPruningMixin, BaseTester):
         super().set(**kwargs)
         self.num = 3
         self.criteria = 0.6
-        self.max_retry = self.num
+        self.max_retry = self.num * 2
         self.parallel_workers = self.num
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
         self.prompt = get_prompt(template_name="nl_paraphrase_generation", schema_string=self.schema_string)
@@ -226,10 +226,8 @@ class SelfConsistencyTester(SchemaPruningMixin, BaseTester):
                         stop_generation = (
                             len(self.test_cases) >= self.num or retry >= self.max_retry
                         )
-                    if stop_generation:
+                    if stop_generation or not submit_task(executor):
                         break
-
-                    submit_task(executor)
 
             for fut in futures:
                 fut.cancel()

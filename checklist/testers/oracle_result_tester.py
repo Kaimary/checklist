@@ -27,7 +27,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         super().set(**kwargs)
         self.num=3
         self.criteria=0.6
-        self.max_retry = self.num
+        self.max_retry = self.num * 2
         self.parallel_workers = self.num
         self.parser = get_parser(parser_name="oracle_data_generation")
         self.schema, self.schema_pruned = self._get_db_schema(pruning_threshold)
@@ -135,8 +135,14 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                     f"Expected keys: `columns` and `rows`"
                 )
             # quick fix format issues frequently observed
+            # (1) the data in ``rows`` key is expected to be list of list
+            # (2) the first row in each key (table) of ``data`` key is column names
             if isinstance(response["result"]["rows"], list) and not isinstance(response["result"]["rows"][0], list):
                 response["result"]["rows"] = [response["result"]["rows"]]
+            for table, rows in response["data"].items():
+                if len(rows) <= 1: continue
+                if all(isinstance(c,str) for c in rows[0]) and any(not isinstance(c,str) for c in rows[1]):
+                    response["data"][table] = rows[1:]
             return True
         def __extract_column_types_from_schema_string(schema_string):
             constraints = ('primary key', 'foreign key', 'unique', 'check', 'constraint')
@@ -270,7 +276,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
             )
         def __values_to_string(vals):
             return "\n".join(
-                f"Column `{t}.{c}`: {', '.join(v)};"
+                f"Column `{t}.{c}`: {', '.join(str(v))};"
                 for t, c2vals in vals.items()
                 for c, v in c2vals.items()
             )
@@ -303,8 +309,8 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
             ret.test_fixtures.data = response.get("data", {}) or None
             ret.test_fixtures.oracle = response.get("result", {}) or None
             if ret.test_fixtures.data and ret.test_fixtures.oracle:
-                trace += f"[simulated DB]: {response.get('data', '')}"
-                trace += f"[oracle data]: {response.get('result', '')}"
+                trace += f"[simulated DB]: {ret.test_fixtures.data}"
+                trace += f"[oracle data]: {ret.test_fixtures.oracle}"
             ret.trace = trace
 
             return response, ret
@@ -371,10 +377,11 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                             stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                         logging.exception("Failed to materialize oracle test instance", exc_info=err)
 
-                    if stop_generation:
+                    with state_lock:
+                        stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+                        
+                    if stop_generation or not submit_task(executor, futures):
                         break
-
-                    submit_task(executor, futures)
 
             for fut in futures:
                 fut.cancel()

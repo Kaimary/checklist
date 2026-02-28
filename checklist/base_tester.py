@@ -249,7 +249,14 @@ class SchemaPruningMixin:
             return schema_copy, cached["schema_pruned"]
 
         schema = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_db_schema() # type: ignore
-        kept = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_sql_columns_dict(self.sql)
+        kept = {}
+        try:
+            kept = DatabaseManager(db_id=self.db_id, db_root_path=self.db_root_path).get_sql_columns_dict(self.sql)
+        except Exception as exc:
+            logging.warning(
+                f"parse sql failed: {exc}"
+            )
+    
         schema_generator = DatabaseSchemaGenerator(
             tentative_schema=DatabaseSchema.from_schema_dict(schema),
             db_id=self.db_id,

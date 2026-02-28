@@ -14,7 +14,6 @@ from checklist.testers.cross_model_tester import CrossModelTester
 from checklist.testers.nl_review_tester import NLReviewTester
 from checklist.testers.noise_row_tester import NoiseRowTester
 from checklist.testers.oracle_result_tester import OracleResultTester
-from checklist.testers.query_review_tester import QueryReviewTester
 from checklist.testers.self_consistency_tester import SelfConsistencyTester
 from checklist.testers.semantic_check_tester import SemanticCheckTester
 
@@ -25,11 +24,10 @@ TEST_CLASS_MAP = {
     "crs": CrossModelTester,
     "orc": OracleResultTester,
     "nlr": NLReviewTester,
-    "qry": QueryReviewTester,
     "slf": SelfConsistencyTester,
 }
     # "test": TestingTester,
-    
+    # "qry": QueryReviewTester,    
     # "syn": MinimumSyntaxTester,
     # "lax": NLRelaxTester,
     # "stn": NLStrengthenTester,

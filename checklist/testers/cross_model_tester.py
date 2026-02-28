@@ -20,7 +20,7 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
     def set(self, pruning_threshold=20, **kwargs):
         super().set(**kwargs)
         self.num=3
-        self.max_retry = self.num
+        self.max_retry = self.num * 2
         self.active_model_num = 3
         model_list=(["resdsql", "codes15b", "dailsql", "llm:gpt-5.1"] \
                     if "spider" in self.db_root_path else ["chess", "cscsql32b", "omnisql32b", "llm:gpt-5.1"])
@@ -232,10 +232,8 @@ class CrossModelTester(SchemaPruningMixin, BaseTester):
                     with state_lock:
                         stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
 
-                    if stop_generation:
+                    if stop_generation or not submit_task(executor, futures):
                         break
-
-                    submit_task(executor, futures)
 
             for fut in futures:
                 fut.cancel()
