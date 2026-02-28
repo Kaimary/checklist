@@ -9,7 +9,7 @@ from checklist.eval.bird.evaluation import execute_model
 def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, data_file_path, nl2sql_model_name=None, predicted_sql_path=None):    
     data = json.load(open(data_file_path))
     judgments = [json.loads(line) for line in open(judgment_file_path)]
-    if benchmark_name in ["spider", "bird"]:
+    if "spider" in benchmark_name or "bird" in benchmark_name:
         assert predicted_sql_path is not None
         preds = [line.strip() for line in open(predicted_sql_path).readlines()]
         assert len(preds) == len(data)
@@ -30,14 +30,14 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
         # print(idx)
         db_id = ex['db_id']
         db_path = os.path.join(db_root_path, db_id, f"{db_id}.sqlite")
-        pred = preds[idx] if benchmark_name in ["spider", "bird"] else ex['sql']
+        pred = preds[idx] if "spider" in benchmark_name or "bird" in benchmark_name else ex['sql']
         difficulty = ex['difficulty'] if 'difficulty' in ex.keys() else 'unknown'
         if difficulty == 'simple': simples += 1
         elif difficulty == 'moderate': moderates += 1
         elif difficulty == 'challenging': challengings += 1
 
         ret = {}
-        if benchmark_name in ["spider", "bird"]:
+        if "spider" in benchmark_name or "bird" in benchmark_name:
             # for spider and bird, we need to execute the predicted SQL and compare with the gold SQL to determine correctness
             gold_sql = ex['SQL'] if 'SQL' in ex else ex['query']
             ret = execute_model(pred, gold_sql, db_path, idx=-1, meta_time_out=30.0)
@@ -56,13 +56,10 @@ def run_evalution(judge_name, judgment_file_path, benchmark_name, db_root_path, 
 
         if judgment['final_judgment'] and judgment_label == judgment['final_judgment']: TP += 1
         elif not judgment['final_judgment'] and judgment_label != judgment['final_judgment']: 
-            # print(idx)
-            # print(judgment)
+            # print(idx+1)
             FN += 1
         elif judgment['final_judgment'] and judgment_label != judgment['final_judgment']: FP += 1
         else: 
-            # print(idx)
-            # print(judgment)
             TN += 1
     
     print(f"Evaluation Results of `{judge_name}` on `{benchmark_name}{f'+{nl2sql_model_name}' if nl2sql_model_name else ''}`:")

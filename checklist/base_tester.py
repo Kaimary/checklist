@@ -256,12 +256,13 @@ class SchemaPruningMixin:
             db_path=self.db_path
         )
         for k, cols in schema_generator.get_all_primary_foreign_keys().items():
-            if k.lower() not in kept.keys(): 
-                kept[k.lower()] = cols
+            key = k.lower()
+            if key not in kept.keys(): 
+                kept[key] = cols
             else: 
                 for col in cols:
-                    if col.lower() not in kept[k.lower()] and col not in kept[k.lower()]: 
-                        kept[k.lower()].append(col)
+                    if col.lower() not in kept[key] and col not in kept[key] and len(kept[key]) <= 10: # avoid too many fk found in the table
+                        kept[key].append(col)
         schema, schema_pruned = self._prune_schema_if_needed(
             schema=schema,
             threshold=threshold,

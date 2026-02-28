@@ -57,11 +57,11 @@ CONFIGS: Dict[str, Dict[str, Any]] = {
     "deepseek-chat": {
         "constructor": ChatDeepSeek,
         "params": {"model": "deepseek-chat", "temperature": 0, "logprobs": True}
+    },
+    "deepseek-v3.2": {
+        "constructor": AzureChatOpenAI,
+        "params": {"model": "DeepSeek-V3.2", "temperature": 0, "logprobs": True}
     }
-    # "deepseek-v3.1": {
-    #     "constructor": ChatOpenAI,
-    #     "params": {"model": "DeepSeek-V3.1", "temperature": 0}
-    # }
     # "claude-3-opus-20240229": {
     #     "constructor": ChatAnthropic,
     #     "params": {"model": "claude-3-opus-20240229", "temperature": 0}
@@ -114,7 +114,7 @@ class LLM:
         else:
             self.llm_chain = model
 
-    def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 3, backoff_base: int = 2, jitter_max: int = 60) -> Any:
+    def __call__(self, prompt, parser, request_kwargs, max_attempts: int = 1, backoff_base: int = 2, jitter_max: int = 60) -> Any:
         output, metadata = None, None
         for attempt in range(max_attempts):
             try:

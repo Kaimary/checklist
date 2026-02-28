@@ -41,8 +41,8 @@ def get_data_from_bench(ex, idx, bench_name, predicted_sql_path, db_root_path):
     nl = ex['question']
     hint = ""
     pred, gold, judgment_gold_label=None, None, None
-    if bench_name in ["spider", "bird"]:
-        if "bird": hint = ex['evidence']
+    if  "spider" in bench_name or "bird" in bench_name:
+        if "bird" in bench_name: hint = ex['evidence']
         assert predicted_sql_path is not None
         if predicted_sql_path not in _PRED_CACHE:
             with open(predicted_sql_path) as f:
