@@ -93,6 +93,17 @@ class SchemaPruningMixin:
     def _copy_rows_into_pruned_db(self, target_db_path, schema_subset):
         dest_conn = sqlite3.connect(target_db_path)
         src_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # Some benchmark DBs contain invalid UTF-8 sequences in TEXT fields. The default
+        # sqlite3 text decoding is strict UTF-8 and will raise on fetch. Use a tolerant
+        # decoder so pruned-DB materialization doesn't crash.
+        def _safe_text_factory(raw: bytes) -> str:
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError:
+                # cp1252 is a common "accidental" encoding for Western names; fall back
+                # to a replacement strategy so we always return a valid Python str.
+                return raw.decode("cp1252", errors="replace")
+        src_conn.text_factory = _safe_text_factory
         try:
             dest_cur = dest_conn.cursor()
             src_cur = src_conn.cursor()

@@ -186,6 +186,8 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
                     paraphrase = futures.pop(fut)
                     try:
                         case_ret = fut.result()
+                        with state_lock:
+                            self.test_cases.append(self._form_instance(len(self.test_cases), case_ret))
                     except ValidationError as e:
                         with state_lock:
                             retry += 1
@@ -194,24 +196,20 @@ class NLReviewTester(SchemaPruningMixin, BaseTester):
                         logging.warning(
                             f"NL review test fixture validation failed (attempt {retry}/{self.max_retry}): {e}"
                         )
-                    except Exception as exc:
-                        with state_lock:
-                            retry += 1
-                            if retry < self.max_retry and paraphrase_attempts.get(paraphrase, 0) < self.max_retry:
-                                paraphrase_queue.append(paraphrase)
-                        logging.warning(
-                            f"NL review test case generation failed (attempt {retry}/{self.max_retry}): {exc}"
-                        )
-                    else:
-                        with state_lock:
-                            self.test_cases.append(self._form_instance(len(self.test_cases), case_ret))
-                            # if verbose:
-                            #     spinner.set_message(f"Generated {len(outputs)} test cases ...")
+                    # except Exception as exc:
+                    #     with state_lock:
+                    #         retry += 1
+                    #         if retry < self.max_retry and paraphrase_attempts.get(paraphrase, 0) < self.max_retry:
+                    #             paraphrase_queue.append(paraphrase)
+                    #     logging.warning(
+                    #         f"NL review test case generation failed (attempt {retry}/{self.max_retry}): {exc}"
+                    #     )
 
                     with state_lock:
                         stop_generation = (
                             len(self.test_cases) >= self.num or retry >= self.max_retry
                         )
+                        
                     if stop_generation or not submit_task(executor):
                         break
 

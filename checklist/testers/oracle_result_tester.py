@@ -137,13 +137,177 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
             # quick fix format issues frequently observed
             # (1) the data in ``rows`` key is expected to be list of list
             # (2) the first row in each key (table) of ``data`` key is column names
-            if isinstance(response["result"]["rows"], list) and not isinstance(response["result"]["rows"][0], list):
+            if isinstance(response["result"]["rows"], list) and \
+                response["result"]["rows"] and not isinstance(response["result"]["rows"][0], list):
                 response["result"]["rows"] = [response["result"]["rows"]]
             for table, rows in response["data"].items():
                 if len(rows) <= 1: continue
                 if all(isinstance(c,str) for c in rows[0]) and any(not isinstance(c,str) for c in rows[1]):
                     response["data"][table] = rows[1:]
             return True
+        # def __attempt_row_alignment_fix(table_name, row, column_names, column_types):
+        #     """
+        #     Best-effort fix for common LLM mistakes where a generated row has exactly
+        #     one extra/missing value compared to the table schema.
+
+        #     Returns:
+        #         list: A fixed row with length == len(column_types)
+        #         None: If no safe fix is found
+        #     """
+        #     expected_len = len(column_types)
+
+        #     def __normalize_sqlite_type_(tp: str) -> str:
+        #         tp = str(tp).upper().strip()
+        #         tp = re.sub(r"\s*\(.*\)", "", tp)  # VARCHAR(20) -> VARCHAR
+        #         return tp
+
+        #     def __nullish(v) -> bool:
+        #         if v is None:
+        #             return True
+        #         if isinstance(v, str) and v.strip().lower() in {"null", "none", "nil", "n/a", "na", ""}:
+        #             return True
+        #         return False
+
+        #     def __expected_py(tp: str):
+        #         return sqlite_type_map.get(__normalize_sqlite_type_(tp), str)
+
+        #     expected_types = [__expected_py(tp) for tp in column_types]
+
+        #     def __compatible(v, py_tp) -> bool:
+        #         if __nullish(v):
+        #             return True
+        #         if py_tp is bool:
+        #             if isinstance(v, bool):
+        #                 return True
+        #             if isinstance(v, (int, float)) and v in (0, 1):
+        #                 return True
+        #             if isinstance(v, str) and v.strip().lower() in {
+        #                 "0", "1", "true", "false", "t", "f", "yes", "no", "y", "n"
+        #             }:
+        #                 return True
+        #             return False
+        #         try:
+        #             py_tp(v)
+        #             return True
+        #         except Exception:
+        #             return False
+
+        #     # If the model returned a dict, align by column name (pad with None for missing).
+        #     if isinstance(row, dict):
+        #         if not column_names:
+        #             return None
+        #         fixed = [row.get(c, None) for c in column_names]
+        #         if len(fixed) != expected_len:
+        #             if len(fixed) > expected_len:
+        #                 fixed = fixed[:expected_len]
+        #             else:
+        #                 fixed = fixed + [None] * (expected_len - len(fixed))
+        #         return [None if __nullish(v) else v for v in fixed]
+
+        #     if not isinstance(row, list):
+        #         return None
+        #     if len(row) == expected_len:
+        #         return [None if __nullish(v) else v for v in row]
+        #     if abs(len(row) - expected_len) != 1:
+        #         return None
+
+        #     candidates = []
+        #     col_name_lc = [str(c).strip().lower() for c in (column_names or [])]
+        #     tbl_lc = str(table_name).strip().lower()
+
+        #     if len(row) == expected_len - 1:
+        #         for i in range(expected_len):
+        #             cand = row[:i] + [None] + row[i:]
+        #             bonus = 0
+        #             if i < len(col_name_lc):
+        #                 cn = col_name_lc[i]
+        #                 if expected_types[i] is int:
+        #                     # SQLite will auto-generate INTEGER PRIMARY KEY when inserting NULL.
+        #                     if cn == "id":
+        #                         bonus += 4
+        #                     elif cn.endswith("_id"):
+        #                         bonus += 2
+        #                     if i == 0 and (cn == "id" or cn.endswith("_id")):
+        #                         bonus += 1
+        #             candidates.append((cand, bonus))
+        #     else:  # len(row) == expected_len + 1
+        #         for i in range(len(row)):
+        #             cand = row[:i] + row[i + 1:]
+        #             bonus = 0
+        #             v = row[i]
+        #             if isinstance(v, str):
+        #                 vv = v.strip().strip('"`').lower()
+        #                 if vv == tbl_lc:
+        #                     bonus += 2
+        #                 if vv in col_name_lc:
+        #                     bonus += 2
+        #                 if vv in {"row", "values", "value"}:
+        #                     bonus += 1
+        #             candidates.append((cand, bonus))
+
+        #     best = None
+        #     best_key = None
+        #     best_count = 0
+        #     for cand, bonus in candidates:
+        #         cand = [None if __nullish(v) else v for v in cand]
+        #         mismatches = sum(
+        #             1 for v, py_tp in zip(cand, expected_types) if not __compatible(v, py_tp)
+        #         )
+        #         key = (mismatches, -bonus)
+        #         if best_key is None or key < best_key:
+        #             best_key = key
+        #             best = cand
+        #             best_count = 1
+        #         elif key == best_key:
+        #             best_count += 1
+
+        #     if best is None or best_key[0] > 1:
+        #         return None
+        #     if best_count > 1 and best_key[0] == 0 and best_key[1] == 0:
+        #         return None
+        #     return best
+        def __attempt_row_alignment_fix(table_name, row, column_names, column_types):
+            """
+            Attempt to fix minor row-schema misalignment when column count differs by <=1.
+
+            Strategy:
+            - If missing 1 column: insert None at reasonable position.
+            - If extra 1 column: drop likely redundant column (prefer first if ID-like).
+            """
+
+            expected_len = len(column_types)
+            actual_len = len(row)
+
+            if abs(expected_len - actual_len) != 1:
+                return None
+
+            # -----------------------------
+            # Case 1: Missing one column
+            # -----------------------------
+            if actual_len == expected_len - 1:
+                # Heuristic: if first column looks like primary key (id-like), insert None at front
+                if column_names and column_names[0].lower() in ("id", f"{table_name.lower()}_id"):
+                    return [None] + row
+                # otherwise append None at end
+                return row + [None]
+
+            # -----------------------------
+            # Case 2: One extra column
+            # -----------------------------
+            if actual_len == expected_len + 1:
+                # If first column is integer-like and expected first type is INTEGER
+                first_expected = column_types[0].upper()
+                if (
+                    first_expected == "INTEGER"
+                    and isinstance(row[0], int)
+                ):
+                    # likely redundant ID
+                    return row[1:]
+
+                # otherwise drop last column
+                return row[:-1]
+
+            return None
         def __extract_column_types_from_schema_string(schema_string):
             constraints = ('primary key', 'foreign key', 'unique', 'check', 'constraint')
 
@@ -155,7 +319,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                 table_name = create_table_match.group(1).strip()
                 column_definitions = create_table_match.group(2).strip()
                 definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
-                type_regex = re.compile(r'.*\b(TEXT|INTEGER|REAL|NUMERIC|BLOB|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
+                type_regex = re.compile(r'.*\b(TEXT|FLOAT|INT|INTEGER|REAL|NUMERIC|VARCHAR|BLOB|bool|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
                 types = []
                 for column_def in definitions:
                     column_def = column_def.strip()
@@ -173,11 +337,7 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
             # Remove size qualifiers, e.g., VARCHAR(20) -> VARCHAR
             tp = re.sub(r'\s*\(.*\)', '', tp)
             return tp          
-        def __schema_data_alignment_check(response):
-            tables = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
-            col_types= DatabaseManager().get_all_column_types() if not self.schema_pruned \
-                else __extract_column_types_from_schema_string(self.schema_string)
-            
+        def __schema_data_alignment_check(response, tables, column_types):
             # table name validity check
             tables_in_data = response["data"].keys()
             for td in tables_in_data:
@@ -190,24 +350,42 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
             # column count and data types consistent check
             for t, rows in response["data"].items():
                 if not rows: continue
-                if len(col_types[t]) != len(rows[0]):
-                    raise ValidationError(
-                        f"Schema-data column count mismatch. "
-                        f"Column count in data row: {len(rows[0])}(e.g., {rows[0]}), "
-                        f"Expected column count of table {t}: {len(col_types[t])}({','.join(self.schema[t])})"
-                    )
-                for v, tp in zip(rows[0], col_types[t]):
-                    normalized = __normalize_sqlite_type(tp)
-                    expected_type = sqlite_type_map.get(normalized, str)
-                    try:
-                        if v is not None:
-                            expected_type(v)
-                    except (ValueError, TypeError):
-                        raise ValidationError(
-                            f"Schema-data column type mismatch. "
-                            f"Column type Data: {v} "
-                            f"Expected column type: {expected_type}"
-                        )
+
+                expected_len = len(column_types[t])
+                for i, row in enumerate(rows):
+                    if row is None:
+                        continue
+
+                    if expected_len != len(row):
+                        fixed_row = None
+                        if abs(expected_len - len(row)) == 1:
+                            fixed_row = __attempt_row_alignment_fix(
+                                table_name=t,
+                                row=row,
+                                column_names=self.schema.get(t, []),
+                                column_types=column_types[t]
+                            )
+                        if fixed_row is None:
+                            raise ValidationError(
+                                f"Schema-data column count mismatch. "
+                                f"Column count in data row: {len(row)}(e.g., {row}), "
+                                f"Expected column count of table {t}: {expected_len}({','.join(self.schema[t])})"
+                            )
+                        rows[i] = fixed_row
+                        row = fixed_row
+
+                    for v, tp in zip(row, column_types[t]):
+                        normalized = __normalize_sqlite_type(tp)
+                        expected_type = sqlite_type_map.get(normalized, str)
+                        try:
+                            if v is not None:
+                                expected_type(v)
+                        except (ValueError, TypeError):
+                            raise ValidationError(
+                                f"Schema-data column type mismatch. "
+                                f"Column type Data: {v} "
+                                f"Expected column type: {expected_type}"
+                            )
             return True
         def __response_history_compatible_check(response, history):
             def __dicts_equal___(d1, d2):
@@ -234,7 +412,10 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
         # output format check
         __output_format_check(response)
         # schema-data alignment check
-        __schema_data_alignment_check(response)
+        table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
+        column_types= DatabaseManager().get_all_column_types() if not self.schema_pruned \
+            else __extract_column_types_from_schema_string(self.schema_string)
+        __schema_data_alignment_check(response, table_names, column_types)
         # response duplication check
         __response_history_compatible_check(response, history)
 
@@ -367,15 +548,15 @@ class OracleResultTester(SchemaPruningMixin, BaseTester):
                             #     spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                             stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                         logging.warning(f"Test fixture validation failed: {e}")
-                    except Exception as err:
-                        with state_lock:
-                            if appended_to_history and history:
-                                history.pop()
-                            retry += 1
-                            # if verbose:
-                            #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
-                            stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
-                        logging.exception("Failed to materialize oracle test instance", exc_info=err)
+                    # except Exception as err:
+                    #     with state_lock:
+                    #         if appended_to_history and history:
+                    #             history.pop()
+                    #         retry += 1
+                    #         # if verbose:
+                    #         #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                    #         stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
+                    #     logging.exception("Failed to materialize oracle test instance", exc_info=err)
 
                     with state_lock:
                         stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry

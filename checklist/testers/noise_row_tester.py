@@ -71,7 +71,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         super().set(**kwargs)
         self.criteria=0.6
         self.num=3
-        self.max_retry=self.num
+        self.max_retry = self.num * 2
         self.parallel_workers = self.num
         self.err = ""
         self.parser = get_parser(parser_name="noise_data_injection")
@@ -129,6 +129,49 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         return passed, ret.test_fixtures, ret.results, ret.avg_logprob, ret.trace
     
     def _validate_test_fixture(self, response, history):
+        def __attempt_row_alignment_fix(table_name, row, column_names, column_types):
+            """
+            Attempt to fix minor row-schema misalignment when column count differs by <=1.
+
+            Strategy:
+            - If missing 1 column: insert None at reasonable position.
+            - If extra 1 column: drop likely redundant column (prefer first if ID-like).
+            """
+
+            expected_len = len(column_types)
+            actual_len = len(row)
+
+            if abs(expected_len - actual_len) != 1:
+                return None
+
+            # -----------------------------
+            # Case 1: Missing one column
+            # -----------------------------
+            if actual_len == expected_len - 1:
+                # Heuristic: if first column looks like primary key (id-like), insert None at front
+                if column_names and column_names[0].lower() in ("id", f"{table_name.lower()}_id"):
+                    return [None] + row
+                # otherwise append None at end
+                return row + [None]
+
+            # -----------------------------
+            # Case 2: One extra column
+            # -----------------------------
+            if actual_len == expected_len + 1:
+                # If first column is integer-like and expected first type is INTEGER
+                first_expected = column_types[0].upper()
+                if (
+                    first_expected == "INTEGER"
+                    and isinstance(row[0], int)
+                ):
+                    # likely redundant ID
+                    return row[1:]
+
+                # otherwise drop last column
+                return row[:-1]
+
+            return None
+        
         def __output_format_check(response):
             if not isinstance(response, dict):
                 raise ValidationError(
@@ -143,7 +186,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                     f"Expected keys: `injected_rows` | `injection_type`"
                 )
             return True
-        def __schema_data_alignment_check(response, tables, column_types, schema):
+        def __schema_data_alignment_check(response, tables, column_types):
             def __normalize_sqlite_type(tp: str) -> str:
                 """Normalize SQLite type (case-insensitive, strip length, etc.)."""
                 tp = tp.upper().strip()
@@ -170,22 +213,22 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                 expected_len = len(column_types[t])
                 if expected_len != len(row):
                     fixed_row = None
-                    # len_delta = abs(expected_len - len(row))
-                    # if len_delta <= 1:
-                    #     fixed_row = self._attempt_row_alignment_fix(
-                    #         table_name=t,
-                    #         row=row,
-                    #         column_names=schema.get(t, []),
-                    #         column_types=column_types[t]
-                    #     )
+                    len_delta = abs(expected_len - len(row))
+                    if len_delta == 1:
+                        fixed_row = __attempt_row_alignment_fix(
+                            table_name=t,
+                            row=row,
+                            column_names=self.schema.get(t, []),
+                            column_types=column_types[t]
+                        )
                     if fixed_row is None:
                         raise ValidationError(
                             f"Schema-data column count mismatch. "
                             f"Column count of table `{t}` in data row: {len(row)} (e.g., {row}), "
-                            f"Expected column count: {expected_len}({','.join(schema[t])})"
+                            f"Expected column count: {expected_len}({','.join(self.schema[t])})"
                         )
-                    # row = fixed_row
-                    # data[t] = row
+                    data[t] = fixed_row
+                    row = fixed_row
                 
                 for v, tp in zip(row, column_types[t]):
                     # print(tp)
@@ -212,7 +255,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                 table_name = create_table_match.group(1).strip()
                 column_definitions = create_table_match.group(2).strip()
                 definitions = DatabaseSchemaGenerator._separate_column_definitions(column_definitions)
-                type_regex = re.compile(r'.*\b(TEXT|INTEGER|REAL|NUMERIC|BLOB|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
+                type_regex = re.compile(r'.*\b(TEXT|FLOAT|INT|INTEGER|REAL|NUMERIC|VARCHAR|BLOB|bool|BOOLEAN|DATE|DATETIME)\b', re.IGNORECASE)
                 types = []
                 for column_def in definitions:
                     column_def = column_def.strip()
@@ -246,7 +289,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
         table_names = DatabaseManager().get_db_all_tables() if not self.schema_pruned else [k for k in self.schema.keys()]
         column_types= DatabaseManager().get_all_column_types() \
             if not self.schema_pruned else __extract_column_types_from_schema_string(self.schema_string)
-        __schema_data_alignment_check(response, table_names, column_types, self.schema)
+        __schema_data_alignment_check(response, table_names, column_types)
         # response duplication check
         __response_history_compatible_check(response, history)
 
@@ -362,6 +405,7 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                             stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
                             if stop_generation: break
                     except ValidationError as e:
+                        print(e)
                         with state_lock:
                             if appended_to_history and history:
                                 history.pop()
@@ -369,22 +413,20 @@ class NoiseRowTester(SchemaPruningMixin, BaseTester):
                             # if verbose:
                             #     spinner.set_message(f"Test fixture validation failed (attempt {retry}/{self.max_retry})...")
                         logging.warning(f"Test fixture validation failed: {e}")
-                    except Exception as err:
-                        with state_lock:
-                            if appended_to_history and history:
-                                history.pop()
-                            retry += 1
-                            # if verbose:
-                            #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
-                        logging.exception("Failed to materialize test instance", exc_info=err)
+                    # except Exception as err:
+                    #     with state_lock:
+                    #         if appended_to_history and history:
+                    #             history.pop()
+                    #         retry += 1
+                    #         # if verbose:
+                    #         #     spinner.set_message(f"Test fixture materialization failed (attempt {retry}/{self.max_retry})...")
+                    #     logging.exception("Failed to materialize test instance", exc_info=err)
 
                     with state_lock:
                         stop_generation = len(self.test_cases) >= self.num or retry >= self.max_retry
 
-                    if stop_generation:
+                    if stop_generation or not submit_task(executor, futures):
                         break
-
-                    submit_task(executor, futures)
 
             for fut in futures:
                 fut.cancel()
