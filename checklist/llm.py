@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import re
 import time
@@ -10,6 +11,19 @@ from langchain_core.output_parsers import JsonOutputParser
 
 from langchain_core.exceptions import OutputParserException
 from langchain.output_parsers import OutputFixingParser
+
+
+def _env_float(*names: str, default: float) -> float:
+    for name in names:
+        val = os.getenv(name)
+        if val is None or val == "":
+            continue
+        try:
+            return float(val)
+        except ValueError:
+            logging.warning("Invalid float in env %s=%r; using default=%s", name, val, default)
+            break
+    return default
 
 CONFIGS: Dict[str, Dict[str, Any]] = {
     # "gemini-pro": {
@@ -106,6 +120,14 @@ class LLM:
         constructor = config["constructor"]
         params = config["params"]
         params["temperature"] = self.temperature
+
+        # Keep single-call tail latency bounded; override via env if needed.
+        # NOTE: read env here (not at import time) so `.env` loaded elsewhere can take effect.
+        if constructor is AzureChatOpenAI:
+            params.setdefault(
+                "timeout",
+                _env_float("CHECKLIST_LLM_TIMEOUT_S", "LLM_TIMEOUT_S", default=30.0),
+            )
         if self.base_uri and "openai_api_base" in params:
             params["openai_api_base"] = f"{self.base_uri}/v1"
         model = constructor(**params)
@@ -126,6 +148,7 @@ class LLM:
                     raw_output.content = re.sub(r'(?<!:)//.*', '', raw_output.content)
                     # 把 NULL 替换成字符串 "NULL"
                     raw_output.content = re.sub(r'(?<=,\s)NULL\b', '"NULL"', raw_output.content)
+                    # raw_output.content = re.sub(r"\\'", "'", raw_output.content)
                     # 转义反斜杠 \
                     # raw_output.content = re.sub(r'(".*?")', lambda m: m.group(0).replace('\\', '\\\\'), raw_output.content)
                     # # 转义双引号 "

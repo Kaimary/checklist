@@ -283,10 +283,10 @@ class Predicate:
 
         # Error: Unsupported data type comparison
         elif self._cmp in {"LIKE", "NOT LIKE"}:
-            if not (isinstance(self.ops[-1], str) and "%" in self.ops[-1]):
-                # desc = f"The second operand of {self._cmp} need a wildcard %."
-                desc = f"Do not need {self._cmp} for a const TEXT matching predicate;"
-                res.append(Report(BugLevel.ERROR, self.sql_str, desc))
+            # if not (isinstance(self.ops[-1], str) and "%" in self.ops[-1]):
+            #     # desc = f"The second operand of {self._cmp} need a wildcard %."
+            #     desc = f"Do not need {self._cmp} for a const TEXT matching predicate;"
+            #     res.append(Report(BugLevel.ERROR, self.sql_str, desc))
             sql = f"SELECT COUNT(*) FROM {self.ops[0].tab.tab_name} WHERE {self.ops[0].col_name} LIKE {self.ops[-1]}"
             _, num = execute_sql(self.db_schema.db_path, sql)
             if not num:
