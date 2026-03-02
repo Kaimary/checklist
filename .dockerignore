@@ -1,0 +1,13 @@
+# Keep build context small and avoid baking secrets into images.
+.git
+.vscode
+__pycache__/
+**/__pycache__/
+*.pyc
+.env
+
+# Large / generated artifacts (mount these at runtime if needed)
+output/
+data/
+red/
+mini_dev/
